@@ -119,6 +119,16 @@ async def index():
     return FileResponse("index.html")
 
 
+@app.get("/styles.css")
+async def styles():
+    return FileResponse("styles.css", media_type="text/css")
+
+
+@app.get("/app.js")
+async def javascript():
+    return FileResponse("app.js", media_type="application/javascript")
+
+
 if __name__ == "__main__":
     import uvicorn
 
