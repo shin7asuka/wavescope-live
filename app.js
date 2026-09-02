@@ -1,7 +1,9 @@
-const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
+const API = "__PORT_8000__".startsWith("__PORT_")
+  ? ([location.hostname,"localhost","127.0.0.1"].includes(location.hostname)?"http://127.0.0.1:8000":location.origin)
+  : "__PORT_8000__";
 const state = { asset: "gold", interval: "1m", displayZone: "beijing", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, lastData: null, needsFocus: true };
 const alertAssetNames={gold:"黄金 XAUUSD",silver:"白银 XAGUSD",wti:"WTI USOIL"};
-const alertState={rules:[],latest:{},polling:false,alarm:null,audio:null,alarmTimer:null,alarmLoop:null};
+const alertState={rules:[],latest:{},polling:false,alarm:null,audio:null,alarmTimer:null,alarmLoop:null,subscriptionId:null,pushEnabled:false};
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
 const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
 const displayZones = {
@@ -441,21 +443,60 @@ function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{min
 function saveAlertRules(){
   return alertState.rules;
 }
+function urlBase64ToUint8Array(value){
+  const padding="=".repeat((4-value.length%4)%4),base64=(value+padding).replace(/-/g,"+").replace(/_/g,"/");
+  return Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
+}
+async function loadServerRules(){
+  if(!alertState.subscriptionId) return;
+  try{
+    const response=await fetch(`${API}/api/alerts/${alertState.subscriptionId}`,{cache:"no-store"});
+    if(response.ok){
+      const result=await response.json();
+      alertState.rules=(result.alerts||[]).map(rule=>({...rule,enabled:true,triggered:false}));
+      renderAlertRules();
+    }
+  }catch{}
+}
+async function ensurePushSubscription(){
+  if(!("serviceWorker" in navigator)||!("PushManager" in window)) throw new Error("此设备不支持网页推送");
+  const permission=Notification.permission==="granted"?"granted":await Notification.requestPermission();
+  if(permission!=="granted") throw new Error("系统通知未获授权");
+  const registration=await navigator.serviceWorker.register("./sw.js");
+  const configResponse=await fetch(`${API}/api/push/public-key`,{cache:"no-store"});
+  const config=await configResponse.json();
+  if(!config.enabled||!config.publicKey) throw new Error("服务器推送尚未启用");
+  let subscription=await registration.pushManager.getSubscription();
+  if(!subscription) subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(config.publicKey)});
+  const response=await fetch(`${API}/api/push/subscriptions`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(subscription.toJSON())});
+  if(!response.ok) throw new Error("保存推送订阅失败");
+  const result=await response.json();
+  alertState.subscriptionId=result.subscriptionId;
+  alertState.pushEnabled=true;
+  return result.subscriptionId;
+}
+async function createServerAlert(rule){
+  const subscriptionId=alertState.subscriptionId||await ensurePushSubscription();
+  const response=await fetch(`${API}/api/alerts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subscriptionId,asset:rule.asset,direction:rule.direction,price:rule.price})});
+  if(!response.ok) throw new Error((await response.json()).detail||"创建提醒失败");
+  return response.json();
+}
+async function deleteServerAlert(rule){
+  if(!alertState.subscriptionId||!rule.id) return;
+  try{await fetch(`${API}/api/alerts/${alertState.subscriptionId}/${rule.id}`,{method:"DELETE"});}catch{}
+}
 function renderAlertRules(){
   document.getElementById("alertCount").textContent=alertState.rules.filter(r=>r.enabled).length;
   document.getElementById("alertRules").innerHTML=alertState.rules.length?alertState.rules.map(rule=>`
     <article class="alert-rule ${rule.triggered?"triggered":""}" data-alert-id="${rule.id}">
       <div><strong>${alertAssetNames[rule.asset]} ${rule.direction==="above"?"≥":"≤"} ${fmt(rule.price,rule.asset)}</strong>
-      <span>${rule.triggered?"已触发":rule.enabled?"监控中":"已暂停"}${alertState.latest[rule.asset]!=null?` · 最新 ${fmt(alertState.latest[rule.asset],rule.asset)}`:""}</span></div>
-      <button class="rule-toggle ${rule.enabled?"":"off"}" type="button">${rule.enabled?"暂停":"启用"}</button>
+      <span>${rule.triggered?"已触发":"服务器监控中"}${alertState.latest[rule.asset]!=null?` · 最新 ${fmt(alertState.latest[rule.asset],rule.asset)}`:""}</span></div>
       <button class="rule-delete" type="button">删除</button>
     </article>`).join(""):`<div class="alert-empty">暂无提醒。选择品种、方向并输入目标价。</div>`;
   document.querySelectorAll(".alert-rule").forEach(row=>{
     const rule=alertState.rules.find(x=>x.id===row.dataset.alertId);
-    row.querySelector(".rule-toggle").addEventListener("click",()=>{
-      rule.enabled=!rule.enabled;rule.triggered=false;rule.lastPrice=alertState.latest[rule.asset]??null;saveAlertRules();renderAlertRules();
-    });
     row.querySelector(".rule-delete").addEventListener("click",()=>{
+      deleteServerAlert(rule);
       alertState.rules=alertState.rules.filter(x=>x.id!==rule.id);saveAlertRules();renderAlertRules();
     });
   });
@@ -471,9 +512,10 @@ function updateAlertCapability(){
 async function enableSystemNotifications(){
   if(!("Notification" in window)) return updateAlertCapability();
   try{
-    const permission=await Notification.requestPermission();
-    if(permission==="granted"&&"serviceWorker" in navigator) await navigator.serviceWorker.register("./sw.js");
-  }catch{}
+    await ensurePushSubscription();
+    await loadServerRules();
+    document.getElementById("alertCapability").textContent="锁屏 Web Push 已连接 · 服务器每5秒检测";
+  }catch(error){document.getElementById("alertCapability").textContent=error.message;}
   updateAlertCapability();
 }
 function ensureAudio(){
@@ -756,12 +798,17 @@ document.getElementById("alertLauncher").addEventListener("click",()=>{
 document.getElementById("alertClose").addEventListener("click",()=>document.getElementById("alertModal").hidden=true);
 document.getElementById("alertModal").addEventListener("click",event=>{if(event.target.id==="alertModal") event.currentTarget.hidden=true;});
 document.getElementById("enableNotifications").addEventListener("click",enableSystemNotifications);
-document.getElementById("alertForm").addEventListener("submit",event=>{
+document.getElementById("alertForm").addEventListener("submit",async event=>{
   event.preventDefault();ensureAudio();
   const asset=document.getElementById("alertAsset").value,direction=document.getElementById("alertDirection").value,price=Number(document.getElementById("alertPrice").value);
   if(!Number.isFinite(price)||price<=0) return;
-  alertState.rules.push({id:`a${Date.now()}${Math.random().toString(16).slice(2)}`,asset,direction,price,enabled:true,triggered:false,lastPrice:alertState.latest[asset]??null});
-  saveAlertRules();renderAlertRules();refreshAlerts();document.getElementById("alertPrice").value="";
+  const button=event.submitter;button.disabled=true;button.textContent="正在创建";
+  try{
+    const created=await createServerAlert({asset,direction,price});
+    alertState.rules.push({id:created.id,asset,direction,price,enabled:true,triggered:false,lastPrice:alertState.latest[asset]??null});
+    saveAlertRules();renderAlertRules();refreshAlerts();document.getElementById("alertPrice").value="";
+  }catch(error){document.getElementById("alertCapability").textContent=error.message;}
+  finally{button.disabled=false;button.textContent="添加提醒";}
 });
 document.getElementById("testAlert").addEventListener("click",()=>{
   ensureAudio();const asset=document.getElementById("alertAsset").value,current=alertState.latest[asset]??state.lastData?.price??0;
@@ -775,5 +822,6 @@ setInterval(refresh,1000);
 setInterval(refreshAlerts,1000);
 renderAlertRules();
 updateAlertCapability();
+if("Notification" in window&&Notification.permission==="granted") ensurePushSubscription().then(loadServerRules).catch(()=>{});
 updateClock();
 refresh();

@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 import asyncio
+import hashlib
 import json
+import os
 import random
+import sqlite3
 import string
 import time
 from datetime import datetime, timezone
 
 import websockets
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from pywebpush import WebPushException, webpush
 
 app = FastAPI(title="WaveScope Live")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -30,6 +35,82 @@ INTERVALS = {
 }
 CACHE = {}
 LOCKS = {k: asyncio.Lock() for k in SYMBOLS}
+DATABASE_PATH = os.getenv("DATABASE_PATH", "./wavescope.db")
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:alerts@wavescope.app")
+MONITOR_TASK = None
+
+
+class PushSubscription(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+
+
+class AlertRequest(BaseModel):
+    subscriptionId: str
+    asset: str
+    direction: str
+    price: float
+
+
+def db():
+    parent = os.path.dirname(DATABASE_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    connection = sqlite3.connect(DATABASE_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_db():
+    with db() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS subscriptions (
+              id TEXT PRIMARY KEY,
+              endpoint TEXT NOT NULL,
+              p256dh TEXT NOT NULL,
+              auth TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS alerts (
+              id TEXT PRIMARY KEY,
+              subscription_id TEXT NOT NULL,
+              asset TEXT NOT NULL,
+              direction TEXT NOT NULL,
+              price REAL NOT NULL,
+              last_price REAL,
+              created_at INTEGER NOT NULL,
+              FOREIGN KEY(subscription_id) REFERENCES subscriptions(id)
+            );
+            """
+        )
+
+
+def send_push(subscription, payload):
+    if not VAPID_PRIVATE_KEY:
+        return False
+    info = {
+        "endpoint": subscription["endpoint"],
+        "keys": {"p256dh": subscription["p256dh"], "auth": subscription["auth"]},
+    }
+    try:
+        webpush(
+            subscription_info=info,
+            data=json.dumps(payload, ensure_ascii=False),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_SUBJECT},
+            ttl=300,
+        )
+        return True
+    except WebPushException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (404, 410):
+            with db() as connection:
+                connection.execute("DELETE FROM alerts WHERE subscription_id=?", (subscription["id"],))
+                connection.execute("DELETE FROM subscriptions WHERE id=?", (subscription["id"],))
+        return False
 
 
 def tv_message(method, params):
@@ -161,6 +242,69 @@ async def fetch_market(key, interval):
             raise RuntimeError(f"行情请求失败: {exc}")
 
 
+async def monitor_alerts():
+    while True:
+        try:
+            with db() as connection:
+                pending = connection.execute(
+                    """
+                    SELECT a.*, s.endpoint, s.p256dh, s.auth
+                    FROM alerts a JOIN subscriptions s ON s.id=a.subscription_id
+                    ORDER BY a.created_at
+                    """
+                ).fetchall()
+            if pending:
+                needed = sorted({row["asset"] for row in pending})
+                results = await asyncio.gather(
+                    *(fetch_market(asset, "1m") for asset in needed), return_exceptions=True
+                )
+                prices = {
+                    asset: result["price"]
+                    for asset, result in zip(needed, results)
+                    if not isinstance(result, Exception)
+                }
+                for row in pending:
+                    current = prices.get(row["asset"])
+                    if current is None:
+                        continue
+                    previous = row["last_price"]
+                    if row["direction"] == "above":
+                        crossed = current >= row["price"] if previous is None else previous < row["price"] <= current
+                    else:
+                        crossed = current <= row["price"] if previous is None else previous > row["price"] >= current
+                    if crossed:
+                        asset_name = SYMBOLS[row["asset"]]["code"]
+                        verb = "上穿" if row["direction"] == "above" else "下破"
+                        payload = {
+                            "title": "WaveScope 价位提醒",
+                            "body": f"{asset_name} 当前 {current:.3f}，已{verb}目标 {row['price']:.3f}",
+                            "tag": f"wavescope-{row['id']}",
+                            "url": "/?alert=triggered",
+                        }
+                        await asyncio.to_thread(send_push, row, payload)
+                        with db() as connection:
+                            connection.execute("DELETE FROM alerts WHERE id=?", (row["id"],))
+                    else:
+                        with db() as connection:
+                            connection.execute("UPDATE alerts SET last_price=? WHERE id=?", (current, row["id"]))
+        except Exception:
+            pass
+        await asyncio.sleep(5)
+
+
+@app.on_event("startup")
+async def startup():
+    global MONITOR_TASK
+    init_db()
+    MONITOR_TASK = asyncio.create_task(monitor_alerts())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if MONITOR_TASK:
+        MONITOR_TASK.cancel()
+
+
 @app.get("/api/market/{asset}")
 async def market(asset: str, interval: str = Query("1m")):
     if asset not in SYMBOLS:
@@ -183,6 +327,69 @@ async def quotes():
         if not isinstance(result, Exception):
             values[key] = result["price"]
     return {"quotes": values, "fetchedAt": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/push/public-key")
+async def push_public_key():
+    return {"enabled": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY), "publicKey": VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/push/subscriptions")
+async def save_subscription(subscription: PushSubscription):
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+        raise HTTPException(status_code=503, detail="服务器推送尚未配置")
+    p256dh = subscription.keys.get("p256dh")
+    auth = subscription.keys.get("auth")
+    if not subscription.endpoint.startswith("https://") or not p256dh or not auth:
+        raise HTTPException(status_code=400, detail="无效的推送订阅")
+    subscription_id = hashlib.sha256(subscription.endpoint.encode()).hexdigest()[:32]
+    with db() as connection:
+        connection.execute(
+            """
+            INSERT INTO subscriptions(id,endpoint,p256dh,auth,created_at)
+            VALUES(?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET endpoint=excluded.endpoint,p256dh=excluded.p256dh,auth=excluded.auth
+            """,
+            (subscription_id, subscription.endpoint, p256dh, auth, int(time.time())),
+        )
+    return {"subscriptionId": subscription_id}
+
+
+@app.get("/api/alerts/{subscription_id}")
+async def list_alerts(subscription_id: str):
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT id,asset,direction,price,last_price AS lastPrice,created_at AS createdAt FROM alerts WHERE subscription_id=? ORDER BY created_at",
+            (subscription_id,),
+        ).fetchall()
+    return {"alerts": [dict(row) for row in rows]}
+
+
+@app.post("/api/alerts")
+async def create_alert(request: AlertRequest):
+    if request.asset not in SYMBOLS or request.direction not in ("above", "below") or request.price <= 0:
+        raise HTTPException(status_code=400, detail="无效提醒参数")
+    with db() as connection:
+        subscription = connection.execute(
+            "SELECT id FROM subscriptions WHERE id=?", (request.subscriptionId,)
+        ).fetchone()
+        if not subscription:
+            raise HTTPException(status_code=404, detail="推送订阅不存在，请重新启用通知")
+        alert_id = "a" + hashlib.sha256(
+            f"{request.subscriptionId}:{request.asset}:{request.direction}:{request.price}:{time.time_ns()}".encode()
+        ).hexdigest()[:24]
+        connection.execute(
+            "INSERT INTO alerts(id,subscription_id,asset,direction,price,last_price,created_at) VALUES(?,?,?,?,?,?,?)",
+            (alert_id, request.subscriptionId, request.asset, request.direction, request.price, None, int(time.time())),
+        )
+    return {"id": alert_id, "status": "monitoring"}
+
+
+@app.delete("/api/alerts/{subscription_id}/{alert_id}")
+async def delete_alert(subscription_id: str, alert_id: str):
+    with db() as connection:
+        connection.execute("DELETE FROM alerts WHERE id=? AND subscription_id=?", (alert_id, subscription_id))
+    return {"deleted": True}
 
 
 @app.get("/api/health")
