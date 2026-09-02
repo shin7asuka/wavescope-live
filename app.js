@@ -1,5 +1,5 @@
 const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
-const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, lastData: null };
+const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, lastData: null };
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
 const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
 
@@ -295,19 +295,23 @@ function render(data) {
   };
   candles.setData(data.bars);
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
-  Object.entries(channelSeries).forEach(([key,series])=>series.setData(analysis.channel?analysis.channel.lines[key]:[]));
+  Object.entries(channelSeries).forEach(([key,series])=>{
+    const titles={upper:"动态上轨",middle:"通道中轴",lower:"动态下轨"};
+    series.applyOptions({lastValueVisible:state.showLabels&&key!=="middle",title:state.showLabels?titles[key]:""});
+    series.setData(analysis.channel?analysis.channel.lines[key]:[]);
+  });
   levelPriceLines.forEach(line=>candles.removePriceLine(line)); levelPriceLines=[];
   analysis.levels.support.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
     price:level.price,color:"rgba(81,215,139,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
-    axisLabelVisible:true,title:`S${i+1} ${level.prob}%`,
+    axisLabelVisible:state.showLabels,title:state.showLabels?`S${i+1} ${level.prob}%`:"",
   })));
   analysis.levels.resistance.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
     price:level.price,color:"rgba(255,108,120,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
-    axisLabelVisible:true,title:`R${i+1} ${level.prob}%`,
+    axisLabelVisible:state.showLabels,title:state.showLabels?`R${i+1} ${level.prob}%`:"",
   })));
   if(analysis.macroBand) analysis.macroBand.anchors.forEach(level=>levelPriceLines.push(candles.createPriceLine({
-    price:level.price,color:level.color,lineWidth:2,lineStyle:3,axisLabelVisible:true,
-    title:`${level.key==="upper"?"宏观R":level.key==="lower"?"宏观S":"轴"} ${level.prob}%`,
+    price:level.price,color:level.color,lineWidth:2,lineStyle:3,axisLabelVisible:state.showLabels,
+    title:state.showLabels?`${level.key==="upper"?"宏观R":level.key==="lower"?"宏观S":"轴"} ${level.prob}%`:"",
   })));
   const impulsePoints=analysis.validations.wave5.points||[];
   const markerSets=[
@@ -317,7 +321,7 @@ function render(data) {
     }),
     {time:data.bars.at(-1).time,position:data.change>=0?"belowBar":"aboveBar",color:colors[analysis.main],shape:data.change>=0?"arrowUp":"arrowDown",text:"实时"},
   ];
-  candles.setMarkers(markerSets);
+  candles.setMarkers(state.showLabels?markerSets:[]);
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
   document.getElementById("unit").textContent=data.unit;
@@ -374,8 +378,14 @@ document.querySelectorAll(".tf").forEach(btn=>btn.addEventListener("click",()=>{
   document.querySelectorAll(".tf").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.interval=btn.dataset.interval;refresh().then(()=>chart.timeScale().fitContent());
 }));
 document.querySelectorAll(".legend-item").forEach(btn=>btn.addEventListener("click",()=>{
-  const key=btn.dataset.layer;state.layers[key]=!state.layers[key];btn.classList.toggle("active",state.layers[key]);if(state.lastData)render(state.lastData);
+  const key=btn.dataset.layer;if(!key)return;state.layers[key]=!state.layers[key];btn.classList.toggle("active",state.layers[key]);if(state.lastData)render(state.lastData);
 }));
+document.getElementById("labelToggle").addEventListener("click",e=>{
+  state.showLabels=!state.showLabels;
+  const btn=e.currentTarget;btn.classList.toggle("active",state.showLabels);
+  btn.querySelector("span").textContent=state.showLabels?"隐藏标签":"显示标签";
+  if(state.lastData)render(state.lastData);
+});
 document.querySelector(".theme-toggle").addEventListener("click",()=>{
   const root=document.documentElement;root.dataset.theme=root.dataset.theme==="dark"?"light":"dark";
 });
