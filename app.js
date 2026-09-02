@@ -90,23 +90,6 @@ function pivots(bars, multiplier) {
   return out;
 }
 function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
-function macroGoldBand(last,a,sets) {
-  const anchors=[
-    {key:"upper",price:4561,label:last>=4561?"突破后回踩支撑":"下降带上沿 / 阻力",color:last>=4561?"#51d78b":"#ff7b86"},
-    {key:"pivot",price:4310,label:last>=4310?"近端支撑 / 多空轴":"跌破后反压 / 多空轴",color:"#f4b84b"},
-    {key:"lower",price:4220,label:last>=4220?"下降带下沿 / 支撑":"跌破后反压",color:last>=4220?"#51d78b":"#ff7b86"},
-  ];
-  const allPivots=Object.values(sets).flat();
-  anchors.forEach(x=>{
-    const tolerance=Math.max(6,a*5);
-    const hits=allPivots.filter(p=>Math.abs(p.value-x.price)<=tolerance).length;
-    const proximity=Math.exp(-Math.abs(last-x.price)/Math.max(90,a*35));
-    x.prob=Math.round(Math.min(88,Math.max(28,34+proximity*30+Math.min(20,hits*5))));
-  });
-  const upper=anchors[0].price,lower=anchors[2].price;
-  const position=last>upper?"突破上沿":last<lower?"跌破下沿":`带内 ${Math.round((last-lower)/(upper-lower)*100)}%`;
-  return {anchors,upper,lower,width:upper-lower,position,referenceMove:800};
-}
 function anchoredGoldChannel(bars,dailyBars) {
   const startTime=Date.UTC(2026,2,30)/1000;
   const scope=dailyBars.filter(b=>b.time>=startTime);
@@ -448,10 +431,9 @@ function analyze(bars,macroBars=[]) {
     if(latest&&latest.time<bars.at(-1).time) paths[key].push({time:bars.at(-1).time,value:last});
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
-  const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
   const channel=trendChannel(bars,macroBars);
   const macroChannel=state.asset==="gold"&&macroBars.length?anchoredGoldChannel(bars,macroBars):channel;
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel,macroChannel,phaseModel};
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,channel,macroChannel,phaseModel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function zonedBar(time, zone){
@@ -549,10 +531,6 @@ function render(data) {
     price:level.price,color:"rgba(255,108,120,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
     axisLabelVisible:state.showLabels,title:state.showLabels?`R${i+1} ${level.prob}%`:"",
   })));
-  if(analysis.macroBand) analysis.macroBand.anchors.forEach(level=>levelPriceLines.push(candles.createPriceLine({
-    price:level.price,color:level.color,lineWidth:2,lineStyle:3,axisLabelVisible:state.showLabels,
-    title:state.showLabels?`${level.key==="upper"?"宏观R":level.key==="lower"?"宏观S":"轴"} ${level.prob}%`:"",
-  })));
   const impulsePoints=analysis.validations.wave5.points||[];
   const markerSets=[
     ...impulsePoints.slice(1).map((p,i)=>{
@@ -607,13 +585,11 @@ function render(data) {
   document.getElementById("supportLevels").innerHTML=levelHtml(analysis.levels.support,"support");
   document.getElementById("resistanceLevels").innerHTML=levelHtml(analysis.levels.resistance,"resistance");
   const macroBox=document.getElementById("macroBand");
-  macroBox.hidden=!analysis.macroBand;
-  if(analysis.macroBand){
-    const m=analysis.macroBand;
+  macroBox.hidden=state.asset!=="gold"||!analysis.macroChannel;
+  if(!macroBox.hidden){
     const c=analysis.macroChannel;
-    document.getElementById("macroRange").textContent=c?`${c.direction}${c.anchored?"动态锚定":"包络"}通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
-    document.getElementById("macroPosition").textContent=c?`中轴 ${fmt(c.end.middle)} · 带内 ${Math.round(c.position)}% · ${c.anchored?`90日均衡 ${fmt(c.centerTarget)} · 覆盖${Math.round(c.coverage)}%`:"完整包络"}`:`${m.position}`;
-    document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
+    document.getElementById("macroRange").textContent=`${c.direction}${c.anchored?"动态锚定":"包络"}通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`;
+    document.getElementById("macroPosition").textContent=`中轴 ${fmt(c.end.middle)} · 带内 ${Math.round(c.position)}% · ${c.anchored?`90日均衡 ${fmt(c.centerTarget)} · 覆盖${Math.round(c.coverage)}%`:"完整包络"}`;
   }
   if(state.needsFocus) requestAnimationFrame(()=>focusLatest(data.bars));
 }
