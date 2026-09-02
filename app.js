@@ -200,9 +200,13 @@ function validateWXY(points, trendDirection) {
     note:rules.filter(x=>!x.pass).map(x=>x.name).join("、")};
 }
 function bestValidation(points,bars,last,count,validator) {
-  const tested=candidateWindows(points,bars,last,count).map(candidate=>validator(candidate));
-  return tested.sort((x,y)=>(Number(y.valid)-Number(x.valid))||(y.score-x.score)||
-    ((y.points?.at(-1)?.i||0)-(x.points?.at(-1)?.i||0)))[0] ||
+  const tested=candidateWindows(points,bars,last,count).map(candidate=>{
+    const result=validator(candidate), end=candidate.at(-1);
+    const age=Math.max(0,bars.length-1-(end?.i||0)), live=!!end?.live;
+    const freshness=Math.exp(-age/18);
+    return {...result,age,live,freshness,currentScore:result.score+(result.valid?.3:0)-Math.min(.85,age/18)};
+  });
+  return tested.sort((x,y)=>(y.currentScore-x.currentScore)||(Number(y.valid)-Number(x.valid))||(y.score-x.score))[0] ||
     {valid:false,score:0,rules:[rule(`边界点不足${count}个`,false)],points:[],note:"数据不足"};
 }
 function buildLevels(sets, probs, bars, last, a, direction) {
@@ -273,9 +277,9 @@ function analyze(bars) {
     abc:bestValidation(sets.abc,bars,last,4,p=>validateABC(p,direction)),
   };
   const scores={
-    wave5:1.0+2.0*trendStrength+1.1*(direction>0?hhhl:1-hhhl)+.6*efficiency+2.4*(validations.wave5.score-.5)+(validations.wave5.valid?1.2:-1.6),
-    wave7:1.0+1.7*density+1.5*overlap+1.0*(1-trendStrength)+2.0*(validations.wave7.score-.5)+(validations.wave7.valid?1.0:-1.4),
-    abc:1.0+1.2*(recentA.length>=3?1:.2)+.8*(1-Math.abs(.5-trendStrength))+1.8*(validations.abc.score-.5)+(validations.abc.valid?.8:-1.2),
+    wave5:1.0+2.0*trendStrength+1.1*(direction>0?hhhl:1-hhhl)+.6*efficiency+2.4*(validations.wave5.score-.5)+(validations.wave5.valid?1.2:-1.6)-Math.min(1.8,(validations.wave5.age||0)/12),
+    wave7:1.0+1.7*density+1.5*overlap+1.0*(1-trendStrength)+2.0*(validations.wave7.score-.5)+(validations.wave7.valid?1.0:-1.4)-Math.min(1.5,(validations.wave7.age||0)/15),
+    abc:1.0+1.2*(recentA.length>=3?1:.2)+.8*(1-Math.abs(.5-trendStrength))+1.8*(validations.abc.score-.5)+(validations.abc.valid?.8:-1.2)-Math.min(1.5,(validations.abc.age||0)/15),
   };
   const exp=Object.fromEntries(Object.entries(scores).map(([k,v])=>[k,Math.exp(v)]));
   const total=Object.values(exp).reduce((x,y)=>x+y,0);
@@ -286,28 +290,43 @@ function analyze(bars) {
   let stage="形成中", stageNo=1, legDirection="待确认";
   if(main==="wave5"){
     const selected=validations.wave5.points||[];
-    const complete=validations.wave5.valid&&selected.length===6;
-    const live=selected.at(-1)?.live;
+    const complete=validations.wave5.valid&&selected.length===6&&!validations.wave5.live;
+    const live=validations.wave5.live;
+    const completionAge=validations.wave5.age||0;
     const seq=ps.slice(-5).map(p=>p.type).join("");
     if(complete) stageNo=5;
     else if(direction>0){ stageNo=seq.endsWith("LHL")?(last>(prior?.value||last)?3:2):seq.endsWith("LHLHL")?5:(lp?.type==="H"?4:3); }
     else { stageNo=seq.endsWith("HLH")?(last<(prior?.value||last)?3:2):seq.endsWith("HLHLH")?5:(lp?.type==="L"?4:3); }
-    const impulseUp=direction>0;
+    const impulseUp=selected.length?selected[0].type==="L":direction>0;
     const legUp=(stageNo%2===1)?impulseUp:!impulseUp;
     legDirection=legUp?"上升":"下降";
-    stage=validations.wave5.valid?(complete&&!live?`第5浪完成；后续段实时形成中`:`第${stageNo}浪${legDirection}${stageNo===2||stageNo===4?"调整":"推动"}中`):`5浪硬规则未通过：${validations.wave5.note||"边界不足"}`;
+    if(complete&&completionAge<=2) stage=`第5浪刚完成，等待后续K线确认`;
+    else if(complete){
+      const end=selected.at(-1)?.value??last;
+      const postDirection=last<end?"下降":"上升";
+      const correcting=impulseUp?last<end:last>end;
+      stage=correcting?`5浪已于${completionAge}根K线前完成；当前${postDirection}A浪调整候选`:`价格越过原5浪端点；按延伸浪重新编号`;
+      legDirection=postDirection;
+    }else if(validations.wave5.valid&&live) stage=`第5浪${legDirection}延伸候选，尚未完成`;
+    else stage=`推动结构重编号中：${validations.wave5.note||"边界不足"}`;
   } else if(main==="wave7") {
-    const selected=validations.wave7.points||[], complete=validations.wave7.valid&&selected.length===8, live=selected.at(-1)?.live;
+    const selected=validations.wave7.points||[], complete=validations.wave7.valid&&selected.length===8&&!validations.wave7.live, live=validations.wave7.live, completionAge=validations.wave7.age||0;
     stageNo=complete?7:Math.max(1,Math.min(7,ps.length%8||7));
     const legUp=(stageNo%2===1)?direction<0:direction>0;
     legDirection=legUp?"上升":"下降";
-    stage=validations.wave7.valid?(complete&&!live?`W-X-Y完成；后续段实时形成中`:`W-X-Y第${stageNo}段${legDirection}${stageNo===7?"末端确认":"调整"}中`):`W-X-Y规则未通过：${validations.wave7.note||"边界不足"}`;
+    if(complete&&completionAge<=2) stage="W-X-Y刚完成，等待后续K线确认";
+    else if(complete) stage=`W-X-Y已于${completionAge}根K线前完成；当前后续结构重新识别`;
+    else if(validations.wave7.valid&&live) stage=`W-X-Y第7段${legDirection}延伸候选，尚未完成`;
+    else stage=`W-X-Y规则未通过：${validations.wave7.note||"边界不足"}`;
   } else {
-    const selected=validations.abc.points||[], complete=validations.abc.valid&&selected.length===4, live=selected.at(-1)?.live;
+    const selected=validations.abc.points||[], complete=validations.abc.valid&&selected.length===4&&!validations.abc.live, live=validations.abc.live, completionAge=validations.abc.age||0;
     stageNo=complete?3:Math.max(1,Math.min(3,ps.length%4||3));
     const legUp=stageNo===2?direction>0:direction<0;
     legDirection=legUp?"上升":"下降";
-    stage=validations.abc.valid?(complete&&!live?"ABC完成；后续段实时形成中":[`A浪${legDirection}调整中`,`B浪${legDirection}反弹中`,`C浪${legDirection}完成候选`][stageNo-1]):`ABC规则未通过：${validations.abc.note||"边界不足"}`;
+    if(complete&&completionAge<=2) stage="ABC刚完成，等待后续K线确认";
+    else if(complete) stage=`ABC已于${completionAge}根K线前完成；当前新结构形成中`;
+    else if(validations.abc.valid&&live) stage=`C浪${legDirection}延伸候选，尚未完成`;
+    else stage=`ABC规则未通过：${validations.abc.note||"边界不足"}`;
   }
   const invalidation=lp?.value ?? (direction>0?Math.min(...bars.slice(-20).map(b=>b.low)):Math.max(...bars.slice(-20).map(b=>b.high)));
   const momentum=Math.abs(last-closes.at(-6))/a;
