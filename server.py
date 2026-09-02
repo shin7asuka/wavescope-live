@@ -3,7 +3,7 @@ import asyncio
 import time
 from datetime import datetime, timezone
 
-import httpx
+import requests
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -77,9 +77,14 @@ async def fetch_market(key, interval):
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
         params = {"interval": y_interval, "range": y_range, "includePrePost": "true"}
         try:
-            async with httpx.AsyncClient(timeout=8, headers={"User-Agent": "Mozilla/5.0 WaveScope/1.0"}) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
+            response = await asyncio.to_thread(
+                requests.get,
+                url,
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0 WaveScope/1.0"},
+                timeout=8,
+            )
+            response.raise_for_status()
             data = clean_chart(response.json(), key, interval)
             CACHE[cache_key] = {"at": now, "data": data}
             return data
