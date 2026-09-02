@@ -95,7 +95,7 @@
               <button class="legend-item active" data-layer="wave5" data-testid="button-layer-wave5"><i class="c5"></i>5浪推动</button>
               <button class="legend-item active" data-layer="wave7" data-testid="button-layer-wave7"><i class="c7"></i>W-X-Y调整</button>
               <button class="legend-item active" data-layer="abc" data-testid="button-layer-abc"><i class="ca"></i>ABC锯齿</button>
-              <span class="legend-item channel-legend"><i class="channel-line"></i>动态趋势带</span>
+              <span id="channelLegend" class="legend-item channel-legend"><i class="channel-line"></i><span>局部趋势带</span></span>
               <button id="sessionToggle" class="legend-item session-toggle active" data-testid="button-session-toggle" title="主要经济体常规现货市场时段，不含节假日及临时调整"><i></i><span>隐藏国家时段</span></button>
               <button id="labelToggle" class="legend-item label-toggle" data-testid="button-label-toggle"><i>标</i><span>显示标签</span></button>
             </div>
@@ -149,7 +149,7 @@
               </div>
               <div class="macro-range"><strong id="macroRange">—</strong><span id="macroPosition">—</span></div>
               <div id="macroLevels" class="macro-levels"></div>
-              <p class="macro-note">黄金主通道自3月30日起算：确认高点确定下降斜率，外轨采用稳健高低残差，中轴跟随90个日线交易时段的均衡中心缓慢调整；实时最新K线突破时立即扩轨。</p>
+              <p class="macro-note">黄金主通道自3月30日起算：确认高点确定下降斜率，中轴跟随90个日线交易时段的均衡中心。日K/周K绘制该主通道；分钟/小时图绘制本周期局部通道，避免压缩K线。右侧主通道状态始终每秒更新。</p>
             </div>
             <div class="signal-box">
               <span class="eyebrow">当前判断</span>

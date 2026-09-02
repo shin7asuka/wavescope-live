@@ -166,7 +166,7 @@ function anchoredGoldChannel(bars,dailyBars) {
     }};
 }
 function trendChannel(bars,dailyBars=[]) {
-  if(state.asset==="gold"&&dailyBars.length) {
+  if(state.asset==="gold"&&dailyBars.length&&["1d","1w"].includes(state.interval)) {
     const anchored=anchoredGoldChannel(bars,dailyBars);
     if(anchored) return anchored;
   }
@@ -450,7 +450,8 @@ function analyze(bars,macroBars=[]) {
   const levels=buildLevels(sets,probs,bars,last,a,direction);
   const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
   const channel=trendChannel(bars,macroBars);
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel,phaseModel};
+  const macroChannel=state.asset==="gold"&&macroBars.length?anchoredGoldChannel(bars,macroBars):channel;
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel,macroChannel,phaseModel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function zonedBar(time, zone){
@@ -567,6 +568,7 @@ function render(data) {
   sessionToggle.disabled=!intraday;
   sessionToggle.classList.toggle("unavailable",!intraday);
   document.getElementById("sessionRef").textContent=intraday?"国家时段 澳 · 日 · 中 · 印 · 德 · 英 · 美":"日K/周K不显示日内时段";
+  document.querySelector("#channelLegend span").textContent=state.asset==="gold"&&["1d","1w"].includes(state.interval)?"长期趋势带":"局部趋势带";
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
   document.getElementById("unit").textContent=data.unit;
@@ -608,7 +610,7 @@ function render(data) {
   macroBox.hidden=!analysis.macroBand;
   if(analysis.macroBand){
     const m=analysis.macroBand;
-    const c=analysis.channel;
+    const c=analysis.macroChannel;
     document.getElementById("macroRange").textContent=c?`${c.direction}${c.anchored?"动态锚定":"包络"}通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
     document.getElementById("macroPosition").textContent=c?`中轴 ${fmt(c.end.middle)} · 带内 ${Math.round(c.position)}% · ${c.anchored?`90日均衡 ${fmt(c.centerTarget)} · 覆盖${Math.round(c.coverage)}%`:"完整包络"}`:`${m.position}`;
     document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
