@@ -1,5 +1,5 @@
 const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
-const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, lastData: null };
+const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, lastData: null, needsFocus: true };
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
 const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
 
@@ -286,6 +286,14 @@ function analyze(bars) {
   return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
+function focusLatest(bars){
+  const visibleByInterval={ "1m":150,"5m":160,"15m":170,"1h":150,"1d":180,"1w":156 };
+  const widthFactor=chartEl.clientWidth<600?.52:chartEl.clientWidth<900?.78:1;
+  const visible=Math.min(bars.length,Math.max(55,Math.round((visibleByInterval[state.interval]||160)*widthFactor)));
+  chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-visible)-.5,to:bars.length-1+7});
+  chart.priceScale("right").applyOptions({autoScale:true,scaleMargins:{top:.08,bottom:.12}});
+  state.needsFocus=false;
+}
 function render(data) {
   state.lastData=data; const analysis=analyze(data.bars);
   const directionalNames={
@@ -363,6 +371,7 @@ function render(data) {
     document.getElementById("macroPosition").textContent=c?`带内 ${Math.round(c.position)}% · 置信${c.confidence}%`:`${m.position}`;
     document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
   }
+  if(state.needsFocus) requestAnimationFrame(()=>focusLatest(data.bars));
 }
 async function refresh(){
   try{
@@ -372,10 +381,10 @@ async function refresh(){
   }catch(e){document.getElementById("feedStatus").textContent="正在重连";document.querySelector(".live-chip").classList.add("stale");}
 }
 document.querySelectorAll(".asset-button").forEach(btn=>btn.addEventListener("click",()=>{
-  document.querySelectorAll(".asset-button").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.asset=btn.dataset.asset;refresh();
+  document.querySelectorAll(".asset-button").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.asset=btn.dataset.asset;state.needsFocus=true;refresh();
 }));
 document.querySelectorAll(".tf").forEach(btn=>btn.addEventListener("click",()=>{
-  document.querySelectorAll(".tf").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.interval=btn.dataset.interval;refresh().then(()=>chart.timeScale().fitContent());
+  document.querySelectorAll(".tf").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.interval=btn.dataset.interval;state.needsFocus=true;refresh();
 }));
 document.querySelectorAll(".legend-item").forEach(btn=>btn.addEventListener("click",()=>{
   const key=btn.dataset.layer;if(!key)return;state.layers[key]=!state.layers[key];btn.classList.toggle("active",state.layers[key]);if(state.lastData)render(state.lastData);
@@ -391,4 +400,4 @@ document.querySelector(".theme-toggle").addEventListener("click",()=>{
 });
 setInterval(()=>document.getElementById("clock").textContent=new Date().toLocaleTimeString("zh-CN",{hour12:false}),1000);
 setInterval(refresh,1000);
-refresh().then(()=>chart.timeScale().fitContent());
+refresh();
