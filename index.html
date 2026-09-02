@@ -87,12 +87,15 @@
                 <button class="tf" data-interval="5m" data-testid="button-timeframe-5m">5分</button>
                 <button class="tf" data-interval="15m" data-testid="button-timeframe-15m">15分</button>
                 <button class="tf" data-interval="1h" data-testid="button-timeframe-1h">1时</button>
+                <button class="tf" data-interval="1d" data-testid="button-timeframe-1d">日K</button>
+                <button class="tf" data-interval="1w" data-testid="button-timeframe-1w">周K</button>
               </div>
             </div>
             <div class="legend">
               <button class="legend-item active" data-layer="wave5" data-testid="button-layer-wave5"><i class="c5"></i>5浪推动</button>
               <button class="legend-item active" data-layer="wave7" data-testid="button-layer-wave7"><i class="c7"></i>W-X-Y调整</button>
               <button class="legend-item active" data-layer="abc" data-testid="button-layer-abc"><i class="ca"></i>ABC锯齿</button>
+              <span class="legend-item channel-legend"><i class="channel-line"></i>动态趋势带</span>
             </div>
             <div id="chart" data-testid="chart-market"></div>
             <div class="chart-footer">
@@ -126,12 +129,12 @@
             </div>
             <div id="macroBand" class="macro-band" data-testid="macro-band">
               <div class="levels-head">
-                <span class="eyebrow">黄金大级别下降带</span>
+                <span class="eyebrow">黄金动态趋势带</span>
                 <span class="level-note">每秒重算状态</span>
               </div>
               <div class="macro-range"><strong id="macroRange">—</strong><span id="macroPosition">—</span></div>
               <div id="macroLevels" class="macro-levels"></div>
-              <p class="macro-note">约800美元指90日主波段高低振幅，不等于上下沿间距。</p>
+              <p class="macro-note">倾斜上下轨随所选周期回归重算；4561、4310、4220保留为大级别水平锚点。约800美元指90日主波段振幅。</p>
             </div>
             <div class="signal-box">
               <span class="eyebrow">当前判断</span>

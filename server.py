@@ -25,6 +25,8 @@ INTERVALS = {
     "5m": "5",
     "15m": "15",
     "1h": "60",
+    "1d": "1D",
+    "1w": "1W",
 }
 CACHE = {}
 LOCKS = {k: asyncio.Lock() for k in SYMBOLS}

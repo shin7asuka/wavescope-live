@@ -18,6 +18,11 @@ const waveSeries = {
   wave7: chart.addLineSeries({ color: colors.wave7, lineWidth: 2, lineStyle: 2, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false }),
   abc: chart.addLineSeries({ color: colors.abc, lineWidth: 2, lineStyle: 1, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false }),
 };
+const channelSeries = {
+  upper: chart.addLineSeries({ color:"#ff7b86",lineWidth:3,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"动态上轨" }),
+  middle: chart.addLineSeries({ color:"rgba(244,184,75,.72)",lineWidth:1,lineStyle:3,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"通道中轴" }),
+  lower: chart.addLineSeries({ color:"#51d78b",lineWidth:3,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"动态下轨" }),
+};
 let levelPriceLines = [];
 
 function ema(values, n) {
@@ -65,6 +70,32 @@ function macroGoldBand(last,a,sets) {
   const upper=anchors[0].price,lower=anchors[2].price;
   const position=last>upper?"突破上沿":last<lower?"跌破下沿":`带内 ${Math.round((last-lower)/(upper-lower)*100)}%`;
   return {anchors,upper,lower,width:upper-lower,position,referenceMove:800};
+}
+function quantile(values,q){
+  const sorted=[...values].sort((x,y)=>x-y),pos=(sorted.length-1)*q,base=Math.floor(pos),rest=pos-base;
+  return sorted[base+1]===undefined?sorted[base]:sorted[base]+rest*(sorted[base+1]-sorted[base]);
+}
+function trendChannel(bars) {
+  const count=Math.min(180,bars.length),sample=bars.slice(-count),n=sample.length;
+  if(n<20) return null;
+  const meanX=(n-1)/2,meanY=sample.reduce((s,b)=>s+(b.high+b.low+b.close)/3,0)/n;
+  let numerator=0,denominator=0;
+  sample.forEach((b,i)=>{const dx=i-meanX;numerator+=dx*((b.high+b.low+b.close)/3-meanY);denominator+=dx*dx;});
+  const slope=denominator?numerator/denominator:0,intercept=meanY-slope*meanX;
+  const upperOffset=quantile(sample.map((b,i)=>b.high-(intercept+slope*i)),.92);
+  const lowerOffset=quantile(sample.map((b,i)=>b.low-(intercept+slope*i)),.08);
+  const at=i=>({middle:intercept+slope*i,upper:intercept+slope*i+upperOffset,lower:intercept+slope*i+lowerOffset});
+  const start=at(0),end=at(n-1),last=sample.at(-1).close,width=end.upper-end.lower;
+  const position=Math.max(0,Math.min(100,(last-end.lower)/Math.max(width,.0001)*100));
+  const totalMove=Math.abs(slope)*(n-1),direction=slope>=0?"上升":"下降";
+  const residualScale=Math.max(width/2,.0001);
+  const fit=Math.max(0,Math.min(1,1-sample.reduce((s,b,i)=>s+Math.abs(b.close-at(i).middle),0)/n/residualScale));
+  return {direction,slope,start,end,width,position,totalMove,confidence:Math.round(35+fit*50),
+    lines:{
+      upper:[{time:sample[0].time,value:start.upper},{time:sample.at(-1).time,value:end.upper}],
+      middle:[{time:sample[0].time,value:start.middle},{time:sample.at(-1).time,value:end.middle}],
+      lower:[{time:sample[0].time,value:start.lower},{time:sample.at(-1).time,value:end.lower}],
+    }};
 }
 function candidateWindows(points, bars, last, count) {
   const windows = [];
@@ -249,7 +280,8 @@ function analyze(bars) {
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
   const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand};
+  const channel=trendChannel(bars);
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function render(data) {
@@ -261,6 +293,7 @@ function render(data) {
   };
   candles.setData(data.bars);
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
+  Object.entries(channelSeries).forEach(([key,series])=>series.setData(analysis.channel?analysis.channel.lines[key]:[]));
   levelPriceLines.forEach(line=>candles.removePriceLine(line)); levelPriceLines=[];
   analysis.levels.support.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
     price:level.price,color:"rgba(81,215,139,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
@@ -318,8 +351,9 @@ function render(data) {
   macroBox.hidden=!analysis.macroBand;
   if(analysis.macroBand){
     const m=analysis.macroBand;
-    document.getElementById("macroRange").textContent=`${fmt(m.lower)} — ${fmt(m.upper)} · 宽 ${fmt(m.width)}`;
-    document.getElementById("macroPosition").textContent=m.position;
+    const c=analysis.channel;
+    document.getElementById("macroRange").textContent=c?`${c.direction}通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
+    document.getElementById("macroPosition").textContent=c?`带内 ${Math.round(c.position)}% · 置信${c.confidence}%`:`${m.position}`;
     document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
   }
 }
