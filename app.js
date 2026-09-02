@@ -74,16 +74,25 @@ function analyze(bars) {
   const diff=100-Object.values(probs).reduce((x,y)=>x+y,0); probs.wave5+=diff;
   const main=Object.keys(probs).sort((x,y)=>probs[y]-probs[x])[0];
   const ps=sets[main], lp=ps.at(-1), prior=ps.at(-2);
-  let stage="形成中", stageNo=1;
+  let stage="形成中", stageNo=1, legDirection="待确认";
   if(main==="wave5"){
     const seq=ps.slice(-5).map(p=>p.type).join("");
     if(direction>0){ stageNo=seq.endsWith("LHL")?(last>(prior?.value||last)?3:2):seq.endsWith("LHLHL")?5:(lp?.type==="H"?4:3); }
     else { stageNo=seq.endsWith("HLH")?(last<(prior?.value||last)?3:2):seq.endsWith("HLHLH")?5:(lp?.type==="L"?4:3); }
-    stage=`第${stageNo}浪${stageNo===2||stageNo===4?"调整":"推进"}中`;
+    const impulseUp=direction>0;
+    const legUp=(stageNo%2===1)?impulseUp:!impulseUp;
+    legDirection=legUp?"上升":"下降";
+    stage=`第${stageNo}浪${legDirection}${stageNo===2||stageNo===4?"调整":"推动"}中`;
   } else if(main==="wave7") {
-    stageNo=Math.max(1,Math.min(7,ps.length%8||7)); stage=`第${stageNo}段${stageNo===7?"末端确认":"发展"}中`;
+    stageNo=Math.max(1,Math.min(7,ps.length%8||7));
+    const legUp=(stageNo%2===1)?direction<0:direction>0;
+    legDirection=legUp?"上升":"下降";
+    stage=`第${stageNo}段${legDirection}${stageNo===7?"末端确认":"调整"}中`;
   } else {
-    stageNo=Math.max(1,Math.min(3,ps.length%4||3)); stage=["A浪调整中","B浪反弹中","C浪完成候选"][stageNo-1];
+    stageNo=Math.max(1,Math.min(3,ps.length%4||3));
+    const legUp=stageNo===2?direction>0:direction<0;
+    legDirection=legUp?"上升":"下降";
+    stage=[`A浪${legDirection}调整中`,`B浪${legDirection}反弹中`,`C浪${legDirection}完成候选`][stageNo-1];
   }
   const invalidation=lp?.value ?? (direction>0?Math.min(...bars.slice(-20).map(b=>b.low)):Math.max(...bars.slice(-20).map(b=>b.high)));
   const momentum=Math.abs(last-closes.at(-6))/a;
@@ -93,24 +102,33 @@ function analyze(bars) {
     paths[key]=arr.slice(-count).map(p=>({time:p.time,value:p.value}));
     paths[key].push({time:bars.at(-1).time,value:last});
   });
-  return {probs,main,stage,invalidation,direction,trendStrength,momentum,sets,paths};
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function render(data) {
   state.lastData=data; const analysis=analyze(data.bars);
+  const directionalNames={
+    wave5:`${analysis.direction>0?"上升":"下降"}5浪推动`,
+    wave7:`${analysis.direction>0?"下降":"上升"}7浪调整`,
+    abc:`${analysis.direction>0?"下降":"上升"}ABC调整`,
+  };
   candles.setData(data.bars);
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
+  const startWave=Math.max(1,6-analysis.sets.wave5.slice(-6).length);
   const markerSets=[
-    ...analysis.sets.wave5.slice(-6).map((p,i)=>({time:p.time,position:p.type==="H"?"aboveBar":"belowBar",color:colors.wave5,shape:"circle",text:String(i+1)})),
+    ...analysis.sets.wave5.slice(-6).map((p,i)=>{
+      const n=Math.min(5,startWave+i), up=(n%2===1)?analysis.direction>0:analysis.direction<0;
+      return {time:p.time,position:p.type==="H"?"aboveBar":"belowBar",color:colors.wave5,shape:"circle",text:`${n}${up?"↑":"↓"}`};
+    }),
   ];
   candles.setMarkers(markerSets);
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
   document.getElementById("unit").textContent=data.unit;
   const d=document.getElementById("delta"), sign=data.change>=0?"+":"";
-  d.textContent=`${sign}${fmt(data.change)}  ${sign}${data.changePct.toFixed(2)}%`;
+  d.textContent=`${data.changeBasis}  ${sign}${fmt(data.change)}  ${sign}${data.changePct.toFixed(2)}%`;
   d.className=`delta ${data.change>0?"up":data.change<0?"down":"flat"}`;
-  document.getElementById("primaryWave").textContent=names[analysis.main];
+  document.getElementById("primaryWave").textContent=directionalNames[analysis.main];
   document.getElementById("primaryStage").textContent=analysis.stage;
   document.getElementById("confidence").textContent=analysis.probs[analysis.main];
   document.getElementById("confidenceBar").style.width=`${analysis.probs[analysis.main]}%`;
@@ -118,15 +136,15 @@ function render(data) {
   document.getElementById("trendState").textContent=analysis.direction>0?`偏多 ${Math.round(analysis.trendStrength*100)}%`:`偏空 ${Math.round(analysis.trendStrength*100)}%`;
   document.getElementById("momentumState").textContent=analysis.momentum>1.5?"扩张":analysis.momentum>.7?"中性":"收敛";
   document.getElementById("pivotCount").textContent=analysis.sets.wave7.length;
-  document.getElementById("signalText").textContent=`${names[analysis.main]}暂居首位，当前判断为${analysis.stage}。价格若有效越过 ${fmt(analysis.invalidation)}，需重新编号。`;
+  document.getElementById("signalText").textContent=`${directionalNames[analysis.main]}暂居首位，当前判断为${analysis.stage}。价格若有效越过 ${fmt(analysis.invalidation)}，需重新编号。`;
   document.getElementById("dataTime").textContent=`数据时间 ${new Date(data.dataTime*1000).toLocaleTimeString("zh-CN",{hour12:false})}`;
   document.getElementById("analysisTime").textContent=`分析时间 ${new Date().toLocaleTimeString("zh-CN",{hour12:false})}`;
   document.getElementById("feedStatus").textContent=data.stale?"使用缓存":"行情已连接";
   document.querySelector(".live-chip").classList.toggle("stale",!!data.stale);
   document.getElementById("scenarios").innerHTML=Object.keys(analysis.probs).sort((a,b)=>analysis.probs[b]-analysis.probs[a]).map(key=>
     `<article class="scenario ${key===analysis.main?"primary":""}" style="--scenario-color:${colors[key]}">
-      <div class="scenario-head"><span class="scenario-name"><i></i>${names[key]}</span><strong class="scenario-prob">${analysis.probs[key]}%</strong></div>
-      <p>${key===analysis.main?analysis.stage:key==="wave7"?"区间重叠与连接浪候选":key==="abc"?"三段式调整备选":"顺势推动备选"}</p>
+      <div class="scenario-head"><span class="scenario-name"><i></i>${directionalNames[key]}</span><strong class="scenario-prob">${analysis.probs[key]}%</strong></div>
+      <p>${key===analysis.main?analysis.stage:key==="wave7"?`${analysis.direction>0?"下降":"上升"}复杂调整候选`:key==="abc"?`${analysis.direction>0?"下降":"上升"}三段式调整候选`:`${analysis.direction>0?"上升":"下降"}顺势推动候选`}</p>
       <div class="prob-track"><i style="width:${analysis.probs[key]}%"></i></div>
     </article>`).join("");
 }
