@@ -257,19 +257,19 @@ function analyze(bars) {
     const impulseUp=direction>0;
     const legUp=(stageNo%2===1)?impulseUp:!impulseUp;
     legDirection=legUp?"上升":"下降";
-    stage=validations.wave5.valid?(complete&&!live?`第5浪完成候选`:`第${stageNo}浪${legDirection}${stageNo===2||stageNo===4?"调整":"推动"}中`):`5浪硬规则未通过：${validations.wave5.note||"边界不足"}`;
+    stage=validations.wave5.valid?(complete&&!live?`第5浪完成；后续段实时形成中`:`第${stageNo}浪${legDirection}${stageNo===2||stageNo===4?"调整":"推动"}中`):`5浪硬规则未通过：${validations.wave5.note||"边界不足"}`;
   } else if(main==="wave7") {
     const selected=validations.wave7.points||[], complete=validations.wave7.valid&&selected.length===8, live=selected.at(-1)?.live;
     stageNo=complete?7:Math.max(1,Math.min(7,ps.length%8||7));
     const legUp=(stageNo%2===1)?direction<0:direction>0;
     legDirection=legUp?"上升":"下降";
-    stage=validations.wave7.valid?(complete&&!live?`W-X-Y第7段完成候选`:`W-X-Y第${stageNo}段${legDirection}${stageNo===7?"末端确认":"调整"}中`):`W-X-Y规则未通过：${validations.wave7.note||"边界不足"}`;
+    stage=validations.wave7.valid?(complete&&!live?`W-X-Y完成；后续段实时形成中`:`W-X-Y第${stageNo}段${legDirection}${stageNo===7?"末端确认":"调整"}中`):`W-X-Y规则未通过：${validations.wave7.note||"边界不足"}`;
   } else {
     const selected=validations.abc.points||[], complete=validations.abc.valid&&selected.length===4, live=selected.at(-1)?.live;
     stageNo=complete?3:Math.max(1,Math.min(3,ps.length%4||3));
     const legUp=stageNo===2?direction>0:direction<0;
     legDirection=legUp?"上升":"下降";
-    stage=validations.abc.valid?(complete&&!live?"C浪完成候选":[`A浪${legDirection}调整中`,`B浪${legDirection}反弹中`,`C浪${legDirection}完成候选`][stageNo-1]):`ABC规则未通过：${validations.abc.note||"边界不足"}`;
+    stage=validations.abc.valid?(complete&&!live?"ABC完成；后续段实时形成中":[`A浪${legDirection}调整中`,`B浪${legDirection}反弹中`,`C浪${legDirection}完成候选`][stageNo-1]):`ABC规则未通过：${validations.abc.note||"边界不足"}`;
   }
   const invalidation=lp?.value ?? (direction>0?Math.min(...bars.slice(-20).map(b=>b.low)):Math.max(...bars.slice(-20).map(b=>b.high)));
   const momentum=Math.abs(last-closes.at(-6))/a;
@@ -277,6 +277,8 @@ function analyze(bars) {
   Object.entries(sets).forEach(([key,arr])=>{
     const selected=validations[key].points||[];
     paths[key]=selected.map(p=>({time:p.time,value:p.value}));
+    const latest=paths[key].at(-1);
+    if(latest&&latest.time<bars.at(-1).time) paths[key].push({time:bars.at(-1).time,value:last});
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
   const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
@@ -313,6 +315,7 @@ function render(data) {
       const n=i+1, up=(n%2===1)?analysis.direction>0:analysis.direction<0;
       return {time:p.time,position:p.type==="H"?"aboveBar":"belowBar",color:colors.wave5,shape:"circle",text:`${n}${up?"↑":"↓"}`};
     }),
+    {time:data.bars.at(-1).time,position:data.change>=0?"belowBar":"aboveBar",color:colors[analysis.main],shape:data.change>=0?"arrowUp":"arrowDown",text:"实时"},
   ];
   candles.setMarkers(markerSets);
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
