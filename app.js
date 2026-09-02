@@ -209,6 +209,53 @@ function bestValidation(points,bars,last,count,validator) {
   return tested.sort((x,y)=>(y.currentScore-x.currentScore)||(Number(y.valid)-Number(x.valid))||(y.score-x.score))[0] ||
     {valid:false,score:0,rules:[rule(`边界点不足${count}个`,false)],points:[],note:"数据不足"};
 }
+function normalizePhaseScores(items){
+  const total=items.reduce((sum,x)=>sum+x.score,0)||1;
+  const rows=items.map(x=>({...x,prob:Math.max(1,Math.round(x.score/total*100))}));
+  rows[0].prob+=100-rows.reduce((sum,x)=>sum+x.prob,0);
+  return rows.sort((a,b)=>b.prob-a.prob);
+}
+function buildWave5Phase(validation,points,bars,last,direction,trendStrength,momentum,a){
+  const selected=validation.points||[];
+  const impulseUp=selected.length?selected[0].type==="L":direction>0;
+  const endValue=selected.at(-1)?.value??last;
+  const postPivotCount=selected.length===6?points.filter(p=>p.i>selected.at(-1).i).length:0;
+  const endpointBroken=selected.length===6&&postPivotCount<2&&(impulseUp?last>endValue+.15*a:last<endValue-.15*a);
+  const completed=validation.valid&&!validation.live&&selected.length===6&&!endpointBroken;
+  if(completed){
+    const postPivots=postPivotCount, age=validation.age||0;
+    const sixthDirection=impulseUp?"下降":"上升", seventhDirection=impulseUp?"上升":"下降";
+    let items;
+    if(postPivots===0) items=[
+      {key:"leg6",label:`第6笔 / A浪${sixthDirection}调整`,score:1.7+Math.min(1,age/5)},
+      {key:"extend5",label:`第5浪${impulseUp?"上升":"下降"}延伸`,score:1.05*Math.exp(-age/8)+.25},
+      {key:"next",label:"直接进入下一浪型",score:.75+.35*trendStrength},
+    ];
+    else if(postPivots===1) items=[
+      {key:"leg7",label:`第7笔 / B浪${seventhDirection}反弹`,score:1.9},
+      {key:"leg6",label:`第6笔 / A浪${sixthDirection}延续`,score:.7},
+      {key:"next",label:"转入下一浪型",score:.9+.35*trendStrength},
+    ];
+    else items=[
+      {key:"next",label:`下一浪型（C浪${sixthDirection}/新推动）`,score:2.1+Math.min(1,postPivots/4)},
+      {key:"leg7",label:`第7笔 / B浪${seventhDirection}延伸`,score:.8},
+      {key:"complex",label:"复杂调整延伸",score:1.0+.25*Math.min(2,postPivots)},
+    ];
+    return {mode:"post5",context:`5浪完成后 ${age} 根K线 · 已确认后续摆动 ${postPivots} 笔`,items:normalizePhaseScores(items)};
+  }
+  const lp=points.at(-1), currentLegUp=lp?last>=lp.value:direction>0, pushing=currentLegUp===(direction>0);
+  const recentSwings=points.filter(p=>p.i>=bars.length-90).length, maturity=Math.min(1,recentSwings/7);
+  const up=impulseUp?"上升":"下降", down=impulseUp?"下降":"上升";
+  const items=[
+    {key:"w1",label:`第1浪（${up}推动）`,score:(pushing?1.05:.32)*(1.25-.75*maturity)},
+    {key:"w2",label:`第2浪（${down}调整）`,score:(pushing?.34:1.05)*(1.1-.35*maturity)},
+    {key:"w3",label:`第3浪（${up}推动）`,score:(pushing?1.25:.3)*(.65+trendStrength*1.1)},
+    {key:"w4",label:`第4浪（${down}调整）`,score:(pushing?.28:1.1)*(.55+maturity*.8)},
+    {key:"w5",label:`第5浪（${up}推动）`,score:(pushing?1.0:.3)*(.45+maturity)*(validation.valid&&validation.live?2.2:1)*(momentum<.8?1.2:1)},
+  ];
+  const normalized=normalizePhaseScores(items);
+  return {mode:"forming",context:`${endpointBroken?"原第5浪端点已被越过，按延伸浪重新编号":"5浪尚未确认完成"} · ${pushing?"推动":"回撤"}腿实时评估`,items:normalized};
+}
 function buildLevels(sets, probs, bars, last, a, direction) {
   const raw = [];
   const sourceNames={wave5:"5浪摆动",wave7:"7浪边界",abc:"ABC高低点"};
@@ -276,6 +323,7 @@ function analyze(bars) {
     wave7:bestValidation(sets.wave7,bars,last,8,p=>validateWXY(p,direction)),
     abc:bestValidation(sets.abc,bars,last,4,p=>validateABC(p,direction)),
   };
+  const phaseModel=buildWave5Phase(validations.wave5,sets.wave5,bars,last,direction,trendStrength,Math.abs(last-closes.at(-6))/a,a);
   const scores={
     wave5:1.0+2.0*trendStrength+1.1*(direction>0?hhhl:1-hhhl)+.6*efficiency+2.4*(validations.wave5.score-.5)+(validations.wave5.valid?1.2:-1.6)-Math.min(1.8,(validations.wave5.age||0)/12),
     wave7:1.0+1.7*density+1.5*overlap+1.0*(1-trendStrength)+2.0*(validations.wave7.score-.5)+(validations.wave7.valid?1.0:-1.4)-Math.min(1.5,(validations.wave7.age||0)/15),
@@ -308,7 +356,7 @@ function analyze(bars) {
       stage=correcting?`5浪已于${completionAge}根K线前完成；当前${postDirection}A浪调整候选`:`价格越过原5浪端点；按延伸浪重新编号`;
       legDirection=postDirection;
     }else if(validations.wave5.valid&&live) stage=`第5浪${legDirection}延伸候选，尚未完成`;
-    else stage=`推动结构重编号中：${validations.wave5.note||"边界不足"}`;
+    else stage=`推动结构重编号中；${phaseModel.items[0].label}概率最高`;
   } else if(main==="wave7") {
     const selected=validations.wave7.points||[], complete=validations.wave7.valid&&selected.length===8&&!validations.wave7.live, live=validations.wave7.live, completionAge=validations.wave7.age||0;
     stageNo=complete?7:Math.max(1,Math.min(7,ps.length%8||7));
@@ -340,7 +388,7 @@ function analyze(bars) {
   const levels=buildLevels(sets,probs,bars,last,a,direction);
   const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
   const channel=trendChannel(bars);
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel};
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel,phaseModel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function zonedBar(time, zone){
@@ -482,6 +530,11 @@ function render(data) {
       <p>${key===analysis.main?analysis.stage:key==="wave7"?`${analysis.direction>0?"下降":"上升"}W-X-Y候选`:key==="abc"?`${analysis.direction>0?"下降":"上升"}ABC锯齿候选`:`${analysis.direction>0?"上升":"下降"}顺势推动候选`} · ${analysis.validations[key].valid?"硬规则通过":"硬规则未通过"} · 质量${analysis.validations[key].rules.filter(r=>r.pass).length}/${analysis.validations[key].rules.length}</p>
       <div class="prob-track"><i style="width:${analysis.probs[key]}%"></i></div>
     </article>`).join("");
+  document.getElementById("phaseContext").textContent=analysis.phaseModel.context;
+  document.getElementById("phaseProbabilities").innerHTML=analysis.phaseModel.items.map((item,i)=>
+    `<div class="phase-row ${i===0?"primary":""}">
+      <span>${item.label}</span><div class="phase-track"><i style="width:${item.prob}%"></i></div><strong>${item.prob}%</strong>
+    </div>`).join("");
   const levelHtml=(levels,type)=>levels.length?levels.map((level,i)=>
     `<div class="level-row" style="--level-color:${type==="support"?"var(--up)":"var(--down)"}">
       <div class="level-top"><span class="level-price">${type==="support"?"S":"R"}${i+1} ${fmt(level.price)}</span><span class="level-prob">${level.prob}%</span></div>
