@@ -1,5 +1,7 @@
 const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
 const state = { asset: "gold", interval: "1m", displayZone: "beijing", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, lastData: null, needsFocus: true };
+const alertAssetNames={gold:"黄金 XAUUSD",silver:"白银 XAGUSD",wti:"WTI USOIL"};
+const alertState={rules:[],latest:{},polling:false,alarm:null,audio:null,alarmTimer:null,alarmLoop:null};
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
 const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
 const displayZones = {
@@ -436,6 +438,116 @@ function analyze(bars,macroBars=[]) {
   return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,channel,macroChannel,phaseModel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
+function saveAlertRules(){
+  return alertState.rules;
+}
+function renderAlertRules(){
+  document.getElementById("alertCount").textContent=alertState.rules.filter(r=>r.enabled).length;
+  document.getElementById("alertRules").innerHTML=alertState.rules.length?alertState.rules.map(rule=>`
+    <article class="alert-rule ${rule.triggered?"triggered":""}" data-alert-id="${rule.id}">
+      <div><strong>${alertAssetNames[rule.asset]} ${rule.direction==="above"?"≥":"≤"} ${fmt(rule.price,rule.asset)}</strong>
+      <span>${rule.triggered?"已触发":rule.enabled?"监控中":"已暂停"}${alertState.latest[rule.asset]!=null?` · 最新 ${fmt(alertState.latest[rule.asset],rule.asset)}`:""}</span></div>
+      <button class="rule-toggle ${rule.enabled?"":"off"}" type="button">${rule.enabled?"暂停":"启用"}</button>
+      <button class="rule-delete" type="button">删除</button>
+    </article>`).join(""):`<div class="alert-empty">暂无提醒。选择品种、方向并输入目标价。</div>`;
+  document.querySelectorAll(".alert-rule").forEach(row=>{
+    const rule=alertState.rules.find(x=>x.id===row.dataset.alertId);
+    row.querySelector(".rule-toggle").addEventListener("click",()=>{
+      rule.enabled=!rule.enabled;rule.triggered=false;rule.lastPrice=alertState.latest[rule.asset]??null;saveAlertRules();renderAlertRules();
+    });
+    row.querySelector(".rule-delete").addEventListener("click",()=>{
+      alertState.rules=alertState.rules.filter(x=>x.id!==rule.id);saveAlertRules();renderAlertRules();
+    });
+  });
+}
+function updateAlertCapability(){
+  const notification=("Notification" in window)?Notification.permission:"unsupported";
+  document.getElementById("notificationState").textContent=notification==="granted"?"系统通知已授权":notification==="denied"?"系统通知已被阻止":notification==="unsupported"?"此浏览器不支持系统通知":"系统通知尚未授权";
+  const parts=[navigator.vibrate?"震动可用":"震动不可用","serviceWorker" in navigator?"系统通知组件可用":"系统通知组件不可用"];
+  document.getElementById("alertCapability").textContent=parts.join(" · ");
+  document.getElementById("enableNotifications").disabled=notification==="unsupported"||notification==="denied";
+  document.getElementById("enableNotifications").textContent=notification==="granted"?"通知已启用":"启用系统通知";
+}
+async function enableSystemNotifications(){
+  if(!("Notification" in window)) return updateAlertCapability();
+  try{
+    const permission=await Notification.requestPermission();
+    if(permission==="granted"&&"serviceWorker" in navigator) await navigator.serviceWorker.register("./sw.js");
+  }catch{}
+  updateAlertCapability();
+}
+function ensureAudio(){
+  try{
+    alertState.audio=alertState.audio||new (window.AudioContext||window.webkitAudioContext)();
+    if(alertState.audio.state==="suspended") alertState.audio.resume();
+  }catch{}
+}
+function alarmSignal(){
+  if(navigator.vibrate) navigator.vibrate([500,220,500,700]);
+  if(!alertState.audio) return;
+  try{
+    const now=alertState.audio.currentTime;
+    [0,.22,.44].forEach(offset=>{
+      const oscillator=alertState.audio.createOscillator(),gain=alertState.audio.createGain();
+      oscillator.type="square";oscillator.frequency.value=offset===.44?1040:820;
+      gain.gain.setValueAtTime(.0001,now+offset);gain.gain.exponentialRampToValueAtTime(.16,now+offset+.02);gain.gain.exponentialRampToValueAtTime(.0001,now+offset+.16);
+      oscillator.connect(gain).connect(alertState.audio.destination);oscillator.start(now+offset);oscillator.stop(now+offset+.18);
+    });
+  }catch{}
+}
+async function sendSystemNotification(title,body){
+  if(!("Notification" in window)||Notification.permission!=="granted") return;
+  const options={body,tag:"wavescope-price-alert",renotify:true,requireInteraction:true,vibrate:[500,220,500,700]};
+  try{
+    if("serviceWorker" in navigator){
+      const registration=await navigator.serviceWorker.ready;
+      await registration.showNotification(title,options);
+    }else new Notification(title,options);
+  }catch{try{new Notification(title,{body,tag:"wavescope-price-alert",requireInteraction:true});}catch{}}
+}
+function dismissAlarm(){
+  clearInterval(alertState.alarmLoop);clearInterval(alertState.alarmTimer);
+  alertState.alarmLoop=null;alertState.alarmTimer=null;alertState.alarm=null;
+  if(navigator.vibrate) navigator.vibrate(0);
+  document.getElementById("alarmOverlay").hidden=true;
+}
+function startAlarm(rule,current,isTest=false){
+  if(alertState.alarm) return;
+  ensureAudio();
+  const direction=rule.direction==="above"?"上穿":"下破",message=`${alertAssetNames[rule.asset]} 当前 ${fmt(current,rule.asset)}，已${direction}目标 ${fmt(rule.price,rule.asset)}`;
+  alertState.alarm={rule,endAt:Date.now()+300000};
+  if(!isTest){rule.enabled=false;rule.triggered=true;saveAlertRules();renderAlertRules();}
+  document.getElementById("alarmMessage").textContent=isTest?`测试提醒 · ${message}`:message;
+  document.getElementById("alarmOverlay").hidden=false;
+  alarmSignal();alertState.alarmLoop=setInterval(alarmSignal,2400);
+  sendSystemNotification("WaveScope 价位提醒",message);
+  const tick=()=>{
+    const left=Math.max(0,alertState.alarm.endAt-Date.now()),seconds=Math.ceil(left/1000);
+    document.getElementById("alarmCountdown").textContent=`${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;
+    if(left<=0) dismissAlarm();
+  };
+  tick();alertState.alarmTimer=setInterval(tick,1000);
+}
+function checkAlertRules(quotes){
+  Object.entries(quotes).forEach(([asset,price])=>alertState.latest[asset]=price);
+  for(const rule of alertState.rules){
+    if(!rule.enabled) continue;
+    const current=quotes[rule.asset];if(current==null) continue;
+    const previous=rule.lastPrice;
+    const crossed=rule.direction==="above"?(previous==null?current>=rule.price:previous<rule.price&&current>=rule.price):(previous==null?current<=rule.price:previous>rule.price&&current<=rule.price);
+    rule.lastPrice=current;
+    if(crossed){startAlarm(rule,current);break;}
+  }
+  saveAlertRules();renderAlertRules();
+}
+async function refreshAlerts(){
+  if(alertState.polling||!alertState.rules.some(r=>r.enabled)) return;
+  alertState.polling=true;
+  try{
+    const response=await fetch(`${API}/api/quotes`,{cache:"no-store"});
+    if(response.ok){const result=await response.json();checkAlertRules(result.quotes||{});}
+  }catch{}finally{alertState.polling=false;}
+}
 function zonedBar(time, zone){
   const parts=Object.fromEntries(zoneFormatters[zone].formatToParts(new Date(time*1000)).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
   return {time,date:`${parts.year}-${parts.month}-${parts.day}`,weekday:parts.weekday,minute:(Number(parts.hour)%24)*60+Number(parts.minute)};
@@ -636,8 +748,32 @@ new ResizeObserver(()=>state.lastData&&requestAnimationFrame(()=>drawSessionAxis
 document.querySelector(".theme-toggle").addEventListener("click",()=>{
   const root=document.documentElement;root.dataset.theme=root.dataset.theme==="dark"?"light":"dark";
 });
+document.getElementById("alertLauncher").addEventListener("click",()=>{
+  document.getElementById("alertAsset").value=state.asset;
+  if(state.lastData) document.getElementById("alertPrice").value=state.lastData.price;
+  document.getElementById("alertModal").hidden=false;updateAlertCapability();renderAlertRules();
+});
+document.getElementById("alertClose").addEventListener("click",()=>document.getElementById("alertModal").hidden=true);
+document.getElementById("alertModal").addEventListener("click",event=>{if(event.target.id==="alertModal") event.currentTarget.hidden=true;});
+document.getElementById("enableNotifications").addEventListener("click",enableSystemNotifications);
+document.getElementById("alertForm").addEventListener("submit",event=>{
+  event.preventDefault();ensureAudio();
+  const asset=document.getElementById("alertAsset").value,direction=document.getElementById("alertDirection").value,price=Number(document.getElementById("alertPrice").value);
+  if(!Number.isFinite(price)||price<=0) return;
+  alertState.rules.push({id:`a${Date.now()}${Math.random().toString(16).slice(2)}`,asset,direction,price,enabled:true,triggered:false,lastPrice:alertState.latest[asset]??null});
+  saveAlertRules();renderAlertRules();refreshAlerts();document.getElementById("alertPrice").value="";
+});
+document.getElementById("testAlert").addEventListener("click",()=>{
+  ensureAudio();const asset=document.getElementById("alertAsset").value,current=alertState.latest[asset]??state.lastData?.price??0;
+  startAlarm({asset,direction:"above",price:current},current,true);
+});
+document.getElementById("dismissAlarm").addEventListener("click",dismissAlarm);
+document.addEventListener("keydown",event=>{if(event.key==="Escape"){if(alertState.alarm)dismissAlarm();else document.getElementById("alertModal").hidden=true;}});
 function updateClock(){document.getElementById("clock").textContent=`${displayZones[state.displayZone].short} ${formatDisplayTime(Date.now()/1000,false,true)}`;}
 setInterval(updateClock,1000);
 setInterval(refresh,1000);
+setInterval(refreshAlerts,1000);
+renderAlertRules();
+updateAlertCapability();
 updateClock();
 refresh();

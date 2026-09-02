@@ -175,6 +175,15 @@ async def market(asset: str, interval: str = Query("1m")):
     enriched["macroBars"] = daily["bars"]
     return enriched
 
+@app.get("/api/quotes")
+async def quotes():
+    results = await asyncio.gather(*(fetch_market(key, "1m") for key in SYMBOLS), return_exceptions=True)
+    values = {}
+    for key, result in zip(SYMBOLS, results):
+        if not isinstance(result, Exception):
+            values[key] = result["price"]
+    return {"quotes": values, "fetchedAt": datetime.now(timezone.utc).isoformat()}
+
 
 @app.get("/api/health")
 async def health():
@@ -197,6 +206,18 @@ async def styles():
 @app.get("/app.js")
 async def javascript():
     return FileResponse("app.js", media_type="application/javascript")
+
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse("sw.js", media_type="application/javascript", headers={"Service-Worker-Allowed": "/"})
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return FileResponse("manifest.webmanifest", media_type="application/manifest+json")
+
+@app.get("/icon.svg")
+async def icon():
+    return FileResponse("icon.svg", media_type="image/svg+xml")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="黄金、白银与WTI原油的动态5浪7浪结构分析仪表盘" />
+    <meta name="theme-color" content="#070b10" />
     <title>WaveScope Live | 动态浪型分析</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="preconnect" href="https://api.fontshare.com" />
     <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&f[]=jet-brains-mono@400,500,600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
@@ -170,6 +172,51 @@
           <span>仅供研究，不构成投资建议</span>
         </footer>
       </main>
+    </div>
+    <button id="alertLauncher" class="alert-launcher" data-testid="button-alert-launcher" aria-haspopup="dialog">
+      <span class="alert-bell">!</span><span>价位提醒</span><b id="alertCount">0</b>
+    </button>
+    <div id="alertModal" class="alert-modal" hidden>
+      <section class="alert-sheet" role="dialog" aria-modal="true" aria-labelledby="alertTitle">
+        <div class="alert-head">
+          <div><span class="eyebrow">PRICE ALERT</span><h2 id="alertTitle">价位触发提醒</h2></div>
+          <button id="alertClose" class="icon-button" aria-label="关闭提醒设置">×</button>
+        </div>
+        <div class="alert-permission">
+          <div><strong id="notificationState">系统通知尚未授权</strong><span id="alertCapability">正在检测设备能力</span></div>
+          <button id="enableNotifications" class="secondary-button" data-testid="button-enable-notifications">启用系统通知</button>
+        </div>
+        <form id="alertForm" class="alert-form">
+          <label><span>品种</span><select id="alertAsset">
+            <option value="gold">黄金 XAUUSD</option>
+            <option value="silver">白银 XAGUSD</option>
+            <option value="wti">WTI USOIL</option>
+          </select></label>
+          <label><span>触发方式</span><select id="alertDirection">
+            <option value="above">价格上穿</option>
+            <option value="below">价格下破</option>
+          </select></label>
+          <label><span>目标价</span><input id="alertPrice" type="number" inputmode="decimal" step="any" required placeholder="输入目标价" /></label>
+          <button class="primary-button" type="submit" data-testid="button-add-alert">添加提醒</button>
+        </form>
+        <div class="alert-actions">
+          <button id="testAlert" class="secondary-button" type="button" data-testid="button-test-alert">测试5分钟提醒</button>
+          <span>实际触发后可随时手工关闭</span>
+        </div>
+        <div id="alertRules" class="alert-rules"></div>
+        <p class="alert-caveat">提醒规则在当前页面会话内有效。网页打开时可进行秒级监控与最长5分钟连续震动。锁屏通知取决于系统：Android通常需要允许浏览器通知；iPhone须将网站添加到主屏幕并允许通知。纯网页在锁屏后可能暂停行情监控，可靠的后台推送和长期规则保存仍需独立服务器。</p>
+      </section>
+    </div>
+    <div id="alarmOverlay" class="alarm-overlay" hidden role="alertdialog" aria-modal="true" aria-labelledby="alarmTitle">
+      <div class="alarm-card">
+        <span class="alarm-pulse">!</span>
+        <span class="eyebrow">PRICE LEVEL TRIGGERED</span>
+        <h2 id="alarmTitle">价位提醒已触发</h2>
+        <p id="alarmMessage">—</p>
+        <strong id="alarmCountdown">05:00</strong>
+        <button id="dismissAlarm" class="alarm-dismiss" data-testid="button-dismiss-alarm">关闭提醒</button>
+        <small>关闭后停止声音与震动</small>
+      </div>
     </div>
     <script src="./app.js"></script>
   </body>

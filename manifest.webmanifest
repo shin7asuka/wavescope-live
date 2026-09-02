@@ -1,0 +1,17 @@
+{
+  "name": "WaveScope Live",
+  "short_name": "WaveScope",
+  "description": "黄金、白银与WTI动态浪型及价位提醒",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#070b10",
+  "theme_color": "#070b10",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
