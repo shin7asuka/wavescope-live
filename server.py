@@ -137,12 +137,13 @@ def clean_chart(bars, key, interval):
 async def fetch_market(key, interval):
     now = time.time()
     cache_key = f"{key}:{interval}"
+    cache_ttl = 5 if interval == "1d" else 45 if interval == "1w" else 0.85
     cached = CACHE.get(cache_key)
-    if cached and now - cached["at"] < 0.85:
+    if cached and now - cached["at"] < cache_ttl:
         return cached["data"]
     async with LOCKS[key]:
         cached = CACHE.get(cache_key)
-        if cached and now - cached["at"] < 0.85:
+        if cached and now - cached["at"] < cache_ttl:
             return cached["data"]
         tv_interval = INTERVALS[interval]
         ticker = SYMBOLS[key]["ticker"]
@@ -166,7 +167,13 @@ async def market(asset: str, interval: str = Query("1m")):
         return {"error": "未知品种"}
     if interval not in INTERVALS:
         interval = "1m"
-    return await fetch_market(asset, interval)
+    data = await fetch_market(asset, interval)
+    if asset != "gold":
+        return data
+    daily = data if interval == "1d" else await fetch_market("gold", "1d")
+    enriched = dict(data)
+    enriched["macroBars"] = daily["bars"]
+    return enriched
 
 
 @app.get("/api/health")

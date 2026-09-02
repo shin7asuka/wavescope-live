@@ -107,7 +107,69 @@ function macroGoldBand(last,a,sets) {
   const position=last>upper?"突破上沿":last<lower?"跌破下沿":`带内 ${Math.round((last-lower)/(upper-lower)*100)}%`;
   return {anchors,upper,lower,width:upper-lower,position,referenceMove:800};
 }
-function trendChannel(bars) {
+function anchoredGoldChannel(bars,dailyBars) {
+  const startTime=Date.UTC(2026,2,30)/1000;
+  const scope=dailyBars.filter(b=>b.time>=startTime);
+  if(scope.length<40||!bars.length) return null;
+  const earlyEnd=startTime+22*86400;
+  const firstPool=scope.filter(b=>b.time<=earlyEnd);
+  const first=firstPool.reduce((best,b)=>b.high>best.high?b:best);
+  const confirmedHighs=pivots(scope,1.15).filter(p=>p.type==="H"&&p.time>first.time+25*86400);
+  const secondPivot=confirmedHighs.at(-1);
+  const fallbackPool=scope.filter(b=>b.time>first.time+25*86400&&b.time<scope.at(-1).time);
+  const fallback=fallbackPool.length?fallbackPool.reduce((best,b)=>b.high>best.high?b:best):scope.at(-1);
+  const second=secondPivot?scope[secondPivot.i]:fallback;
+  if(first.time===second.time) return null;
+  const slopePerSecond=(second.high-first.high)/(second.time-first.time);
+  const base=time=>first.high+slopePerSecond*(time-first.time);
+  const liveBars=bars.filter(b=>b.time>=scope.at(-1).time-2*86400);
+  const quantile=(values,p)=>{
+    const sorted=[...values].sort((a,b)=>a-b),index=(sorted.length-1)*p;
+    const lower=Math.floor(index),upper=Math.ceil(index);
+    return sorted[lower]+(sorted[upper]-sorted[lower])*(index-lower);
+  };
+  const highResiduals=scope.map(b=>b.high-base(b.time));
+  const lowResiduals=scope.map(b=>b.low-base(b.time));
+  let highOffset=quantile(highResiduals,.99),lowOffset=quantile(lowResiduals,.06);
+  const equilibriumBars=scope.slice(-90);
+  const equilibriumCloses=equilibriumBars.map(b=>b.close);
+  const live=liveBars.at(-1);
+  if(live&&equilibriumCloses.length) equilibriumCloses[equilibriumCloses.length-1]=live.close;
+  const centerTarget=equilibriumCloses.reduce((sum,value)=>sum+value,0)/equilibriumCloses.length;
+  const rawMiddle=base((live||scope.at(-1)).time)+(highOffset+lowOffset)/2;
+  const rawWidth=highOffset-lowOffset;
+  const centerShift=Math.max(-rawWidth*.08,Math.min(rawWidth*.08,centerTarget-rawMiddle));
+  highOffset+=centerShift;
+  lowOffset+=centerShift;
+  if(live){
+    highOffset=Math.max(highOffset,live.high-base(live.time));
+    lowOffset=Math.min(lowOffset,live.low-base(live.time));
+  }
+  const envelopePad=(atr(scope).at(-1)||0)*.06;
+  const upperAt=time=>base(time)+highOffset+envelopePad;
+  const lowerAt=time=>base(time)+lowOffset-envelopePad;
+  const middleAt=time=>(upperAt(time)+lowerAt(time))/2;
+  const projectedBars=bars.filter(b=>b.time>=startTime);
+  const firstTime=(projectedBars[0]||bars[0]).time,lastTime=bars.at(-1).time,last=bars.at(-1).close;
+  const end={upper:upperAt(lastTime),middle:middleAt(lastTime),lower:lowerAt(lastTime)};
+  const start={upper:upperAt(firstTime),middle:middleAt(firstTime),lower:lowerAt(firstTime)};
+  const width=end.upper-end.lower,position=Math.max(0,Math.min(100,(last-end.lower)/Math.max(width,.0001)*100));
+  const contained=!live||(live.high<=upperAt(live.time)+1e-8&&live.low>=lowerAt(live.time)-1e-8);
+  const coverage=(scope.filter(b=>b.high<=upperAt(b.time)&&b.low>=lowerAt(b.time)).length/scope.length)*100;
+  return {direction:slopePerSecond<0?"下降":"上升",slope:slopePerSecond,start,end,width,position,contained,
+    envelopePad,count:scope.length,anchored:true,anchorStart:startTime,coverage,centerTarget,centerShift,
+    anchors:{first:{time:first.time,value:first.high},second:{time:second.time,value:second.high}},
+    lines:{
+      upper:[{time:firstTime,value:start.upper},{time:lastTime,value:end.upper}],
+      middle:[{time:firstTime,value:start.middle},{time:lastTime,value:end.middle}],
+      lower:[{time:firstTime,value:start.lower},{time:lastTime,value:end.lower}],
+    }};
+}
+function trendChannel(bars,dailyBars=[]) {
+  if(state.asset==="gold"&&dailyBars.length) {
+    const anchored=anchoredGoldChannel(bars,dailyBars);
+    if(anchored) return anchored;
+  }
   const lookback={"1m":180,"5m":180,"15m":180,"1h":120,"1d":90,"1w":26}[state.interval]||180;
   const count=Math.min(lookback,bars.length),sample=bars.slice(-count),n=sample.length;
   if(n<20) return null;
@@ -303,7 +365,7 @@ function buildLevels(sets, probs, bars, last, a, direction) {
   }
   return {support:cluster("support"),resistance:cluster("resistance")};
 }
-function analyze(bars) {
+function analyze(bars,macroBars=[]) {
   const closes = bars.map(b=>b.close), e20=ema(closes,20), e50=ema(closes,50), av=atr(bars);
   const last=closes.at(-1), a=av.at(-1) || 1;
   const trendRaw=(e20.at(-1)-e50.at(-1))/a + (e20.at(-1)-e20.at(-8))/a;
@@ -387,7 +449,7 @@ function analyze(bars) {
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
   const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
-  const channel=trendChannel(bars);
+  const channel=trendChannel(bars,macroBars);
   return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel,phaseModel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
@@ -464,7 +526,7 @@ function focusLatest(bars){
   state.needsFocus=false;
 }
 function render(data) {
-  state.lastData=data; const analysis=analyze(data.bars);
+  state.lastData=data; const analysis=analyze(data.bars,data.macroBars||[]);
   const directionalNames={
     wave5:`${analysis.direction>0?"上升":"下降"}5浪推动`,
     wave7:`${analysis.direction>0?"下降":"上升"}W-X-Y调整`,
@@ -547,8 +609,8 @@ function render(data) {
   if(analysis.macroBand){
     const m=analysis.macroBand;
     const c=analysis.channel;
-    document.getElementById("macroRange").textContent=c?`${c.direction}包络通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
-    document.getElementById("macroPosition").textContent=c?`带内 ${Math.round(c.position)}% · 包络${c.contained?"完整":"异常"}`:`${m.position}`;
+    document.getElementById("macroRange").textContent=c?`${c.direction}${c.anchored?"动态锚定":"包络"}通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
+    document.getElementById("macroPosition").textContent=c?`中轴 ${fmt(c.end.middle)} · 带内 ${Math.round(c.position)}% · ${c.anchored?`90日均衡 ${fmt(c.centerTarget)} · 覆盖${Math.round(c.coverage)}%`:"完整包络"}`:`${m.position}`;
     document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
   }
   if(state.needsFocus) requestAnimationFrame(()=>focusLatest(data.bars));
