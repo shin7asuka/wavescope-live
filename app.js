@@ -49,6 +49,23 @@ function pivots(bars, multiplier) {
   return out;
 }
 function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+function macroGoldBand(last,a,sets) {
+  const anchors=[
+    {key:"upper",price:4561,label:last>=4561?"突破后回踩支撑":"下降带上沿 / 阻力",color:last>=4561?"#51d78b":"#ff7b86"},
+    {key:"pivot",price:4310,label:last>=4310?"近端支撑 / 多空轴":"跌破后反压 / 多空轴",color:"#f4b84b"},
+    {key:"lower",price:4220,label:last>=4220?"下降带下沿 / 支撑":"跌破后反压",color:last>=4220?"#51d78b":"#ff7b86"},
+  ];
+  const allPivots=Object.values(sets).flat();
+  anchors.forEach(x=>{
+    const tolerance=Math.max(6,a*5);
+    const hits=allPivots.filter(p=>Math.abs(p.value-x.price)<=tolerance).length;
+    const proximity=Math.exp(-Math.abs(last-x.price)/Math.max(90,a*35));
+    x.prob=Math.round(Math.min(88,Math.max(28,34+proximity*30+Math.min(20,hits*5))));
+  });
+  const upper=anchors[0].price,lower=anchors[2].price;
+  const position=last>upper?"突破上沿":last<lower?"跌破下沿":`带内 ${Math.round((last-lower)/(upper-lower)*100)}%`;
+  return {anchors,upper,lower,width:upper-lower,position,referenceMove:800};
+}
 function candidateWindows(points, bars, last, count) {
   const windows = [];
   for (let i=Math.max(0,points.length-count-10); i<=points.length-count; i++) {
@@ -231,7 +248,8 @@ function analyze(bars) {
     paths[key]=selected.map(p=>({time:p.time,value:p.value}));
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations};
+  const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function render(data) {
@@ -251,6 +269,10 @@ function render(data) {
   analysis.levels.resistance.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
     price:level.price,color:"rgba(255,108,120,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
     axisLabelVisible:true,title:`R${i+1} ${level.prob}%`,
+  })));
+  if(analysis.macroBand) analysis.macroBand.anchors.forEach(level=>levelPriceLines.push(candles.createPriceLine({
+    price:level.price,color:level.color,lineWidth:2,lineStyle:3,axisLabelVisible:true,
+    title:`${level.key==="upper"?"宏观R":level.key==="lower"?"宏观S":"轴"} ${level.prob}%`,
   })));
   const impulsePoints=analysis.validations.wave5.points||[];
   const markerSets=[
@@ -292,6 +314,14 @@ function render(data) {
     </div>`).join(""):`<span class="level-source">暂无有效价位</span>`;
   document.getElementById("supportLevels").innerHTML=levelHtml(analysis.levels.support,"support");
   document.getElementById("resistanceLevels").innerHTML=levelHtml(analysis.levels.resistance,"resistance");
+  const macroBox=document.getElementById("macroBand");
+  macroBox.hidden=!analysis.macroBand;
+  if(analysis.macroBand){
+    const m=analysis.macroBand;
+    document.getElementById("macroRange").textContent=`${fmt(m.lower)} — ${fmt(m.upper)} · 宽 ${fmt(m.width)}`;
+    document.getElementById("macroPosition").textContent=m.position;
+    document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
+  }
 }
 async function refresh(){
   try{
