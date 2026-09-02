@@ -9,10 +9,10 @@
 - 1分钟、5分钟、15分钟和1小时周期
 - 日K与周K用于观察大级别结构
 - 上游报价没有新成交时，分析时间继续更新，但数据时间保持不变
-- 分钟与小时图标注上海期货交易所/上海国际能源交易中心及美国 COMEX/NYMEX 常规开收盘节点
-- 中国参考时段为北京时间夜盘 21:00–02:30、日盘 09:00–15:00；美国参考时段为芝加哥时间 17:00 重开、16:00 收盘
-- 美国节点通过 IANA 时区自动处理夏令时；交易所节假日与临时调整不在前端日历中
-- 时段核验：[上海期货交易所交易时间](https://www.shfe.com.cn/services/calenderandholidays/tradinghours/)；[CME Group Trading Hours](https://www.cmegroup.com/trading-hours.html)
+- 分钟与小时图在横向时间轴上标注澳大利亚、日本、中国、德国、英国和美国主要现货交易所的开收盘节点
+- 参考核心时段：ASX 10:00–16:00、JPX 09:00–15:30、SSE 09:30–15:00、Xetra 09:00–17:30、LSE 08:00–16:30、NYSE 09:30–16:00，均为当地时间
+- 所有节点通过 IANA 时区换算，自动处理澳大利亚、欧洲和美国夏令时；交易所节假日与临时调整不在前端日历中
+- 时段核验：[ASX](https://www.asx.com.au/markets/market-resources/trading-hours-calendar/cash-market-trading-hours)、[JPX](https://www.jpx.co.jp/english/systems/equities-trading/index.html)、[SSE](https://english.sse.com.cn/start/trading/schedule/)、[Xetra](https://www.cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours)、[LSE](https://www.londonstockexchange.com/trade/trading-hours)、[NYSE](https://www.nyse.com/trade/hours-calendars)
 
 ## 浪型算法
 
