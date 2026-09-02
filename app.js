@@ -107,26 +107,28 @@ function macroGoldBand(last,a,sets) {
   const position=last>upper?"突破上沿":last<lower?"跌破下沿":`带内 ${Math.round((last-lower)/(upper-lower)*100)}%`;
   return {anchors,upper,lower,width:upper-lower,position,referenceMove:800};
 }
-function quantile(values,q){
-  const sorted=[...values].sort((x,y)=>x-y),pos=(sorted.length-1)*q,base=Math.floor(pos),rest=pos-base;
-  return sorted[base+1]===undefined?sorted[base]:sorted[base]+rest*(sorted[base+1]-sorted[base]);
-}
 function trendChannel(bars) {
-  const count=Math.min(180,bars.length),sample=bars.slice(-count),n=sample.length;
+  const lookback={"1m":180,"5m":180,"15m":180,"1h":120,"1d":90,"1w":26}[state.interval]||180;
+  const count=Math.min(lookback,bars.length),sample=bars.slice(-count),n=sample.length;
   if(n<20) return null;
   const meanX=(n-1)/2,meanY=sample.reduce((s,b)=>s+(b.high+b.low+b.close)/3,0)/n;
   let numerator=0,denominator=0;
   sample.forEach((b,i)=>{const dx=i-meanX;numerator+=dx*((b.high+b.low+b.close)/3-meanY);denominator+=dx*dx;});
   const slope=denominator?numerator/denominator:0,intercept=meanY-slope*meanX;
-  const upperOffset=quantile(sample.map((b,i)=>b.high-(intercept+slope*i)),.92);
-  const lowerOffset=quantile(sample.map((b,i)=>b.low-(intercept+slope*i)),.08);
+  const highResiduals=sample.map((b,i)=>b.high-(intercept+slope*i));
+  const lowResiduals=sample.map((b,i)=>b.low-(intercept+slope*i));
+  const channelAtr=atr(sample).at(-1)||0;
+  const envelopePad=channelAtr*.06;
+  const upperOffset=Math.max(...highResiduals)+envelopePad;
+  const lowerOffset=Math.min(...lowResiduals)-envelopePad;
   const at=i=>({middle:intercept+slope*i,upper:intercept+slope*i+upperOffset,lower:intercept+slope*i+lowerOffset});
   const start=at(0),end=at(n-1),last=sample.at(-1).close,width=end.upper-end.lower;
   const position=Math.max(0,Math.min(100,(last-end.lower)/Math.max(width,.0001)*100));
   const totalMove=Math.abs(slope)*(n-1),direction=slope>=0?"上升":"下降";
   const residualScale=Math.max(width/2,.0001);
   const fit=Math.max(0,Math.min(1,1-sample.reduce((s,b,i)=>s+Math.abs(b.close-at(i).middle),0)/n/residualScale));
-  return {direction,slope,start,end,width,position,totalMove,confidence:Math.round(35+fit*50),
+  const contained=sample.every((b,i)=>b.high<=at(i).upper+1e-8&&b.low>=at(i).lower-1e-8);
+  return {direction,slope,start,end,width,position,totalMove,confidence:Math.round(35+fit*50),contained,envelopePad,count,
     lines:{
       upper:[{time:sample[0].time,value:start.upper},{time:sample.at(-1).time,value:end.upper}],
       middle:[{time:sample[0].time,value:start.middle},{time:sample.at(-1).time,value:end.middle}],
@@ -473,8 +475,8 @@ function render(data) {
   if(analysis.macroBand){
     const m=analysis.macroBand;
     const c=analysis.channel;
-    document.getElementById("macroRange").textContent=c?`${c.direction}通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
-    document.getElementById("macroPosition").textContent=c?`带内 ${Math.round(c.position)}% · 置信${c.confidence}%`:`${m.position}`;
+    document.getElementById("macroRange").textContent=c?`${c.direction}包络通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
+    document.getElementById("macroPosition").textContent=c?`带内 ${Math.round(c.position)}% · 包络${c.contained?"完整":"异常"}`:`${m.position}`;
     document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
   }
   if(state.needsFocus) requestAnimationFrame(()=>focusLatest(data.bars));
