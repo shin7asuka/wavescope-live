@@ -1,15 +1,37 @@
 const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
-const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, lastData: null, needsFocus: true };
+const state = { asset: "gold", interval: "1m", displayZone: "beijing", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, lastData: null, needsFocus: true };
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
 const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
+const displayZones = {
+  beijing: { timeZone:"Asia/Shanghai", label:"北京时间", short:"北京" },
+  newyork: { timeZone:"America/New_York", label:"美国东部时间", short:"美东" },
+};
 const zoneFormatters = {
   sydney: new Intl.DateTimeFormat("en-CA",{timeZone:"Australia/Sydney",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
   tokyo: new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Tokyo",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
   shanghai: new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
+  kolkata: new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
   frankfurt: new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
   london: new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/London",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
   newyork: new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
 };
+function epochTime(time){
+  return typeof time==="number"?time:Date.UTC(time.year,time.month-1,time.day)/1000;
+}
+function formatDisplayTime(time, axis=false, seconds=false){
+  const date=new Date(epochTime(time)*1000), zone=displayZones[state.displayZone].timeZone;
+  const options=["1d","1w"].includes(state.interval)&&axis
+    ? {timeZone:zone,month:"2-digit",day:"2-digit"}
+    : {timeZone:zone,hour:"2-digit",minute:"2-digit",second:seconds?"2-digit":undefined,hour12:false};
+  return new Intl.DateTimeFormat("zh-CN",options).format(date);
+}
+function formatAxisTick(time,tickMarkType){
+  if(tickMarkType<=2) return new Intl.DateTimeFormat("zh-CN",{timeZone:displayZones[state.displayZone].timeZone,month:"2-digit",day:"2-digit"}).format(new Date(epochTime(time)*1000));
+  return formatDisplayTime(time,true);
+}
+function formatDisplayDateTime(time){
+  return new Intl.DateTimeFormat("zh-CN",{timeZone:displayZones[state.displayZone].timeZone,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(epochTime(time)*1000));
+}
 
 const chartEl = document.getElementById("chart");
 const chart = LightweightCharts.createChart(chartEl, {
@@ -17,7 +39,8 @@ const chart = LightweightCharts.createChart(chartEl, {
   layout: { background: { type: "solid", color: "transparent" }, textColor: "#8293a3", fontFamily: "Jet Brains Mono, monospace", fontSize: 11 },
   grid: { vertLines: { color: "rgba(100,130,150,.10)" }, horzLines: { color: "rgba(100,130,150,.10)" } },
   rightPriceScale: { borderColor: "rgba(100,130,150,.18)" },
-  timeScale: { borderColor: "rgba(100,130,150,.18)", timeVisible: true, secondsVisible: false, rightOffset: 4 },
+  timeScale: { borderColor: "rgba(100,130,150,.18)", timeVisible: true, secondsVisible: false, rightOffset: 4, tickMarkFormatter:(time,tickMarkType)=>formatAxisTick(time,tickMarkType) },
+  localization: { timeFormatter:time=>`${displayZones[state.displayZone].short} ${formatDisplayTime(time,false)}` },
   crosshair: { mode: 1, vertLine: { color: "rgba(130,150,170,.35)" }, horzLine: { color: "rgba(130,150,170,.35)" } },
 });
 const sessionAxisEl=document.createElement("div");
@@ -316,6 +339,8 @@ function marketSessionEvents(bars){
     {zone:"tokyo",minute:15*60+30,country:"日",market:"日本 JPX",open:false,days:weekdays,color:"#ff7883"},
     {zone:"shanghai",minute:9*60+30,country:"中",market:"中国 SSE",open:true,days:weekdays,color:"#ff9654"},
     {zone:"shanghai",minute:15*60,country:"中",market:"中国 SSE",open:false,days:weekdays,color:"#ff9654"},
+    {zone:"kolkata",minute:9*60+15,country:"印",market:"印度 NSE",open:true,days:weekdays,color:"#ffb357"},
+    {zone:"kolkata",minute:15*60+30,country:"印",market:"印度 NSE",open:false,days:weekdays,color:"#ffb357"},
     {zone:"frankfurt",minute:9*60,country:"德",market:"德国 Xetra",open:true,days:weekdays,color:"#7ba6ff"},
     {zone:"frankfurt",minute:17*60+30,country:"德",market:"德国 Xetra",open:false,days:weekdays,color:"#7ba6ff"},
     {zone:"london",minute:8*60,country:"英",market:"英国 LSE",open:true,days:weekdays,color:"#b18cff"},
@@ -357,7 +382,7 @@ function drawSessionAxis(bars){
     el.className=`session-axis-event ${event.open?"open":"close"}`;
     el.style.cssText=`--event-x:${event.x}px;--event-color:${event.color};--event-lane:${lane}`;
     el.textContent=event.text;
-    el.title=`${event.market} ${event.open?"开盘":"收盘"} · 当地时间 ${event.localTime}`;
+    el.title=`${event.market} ${event.open?"开盘":"收盘"} · ${displayZones[state.displayZone].label} ${formatDisplayDateTime(event.time)} · 市场当地 ${event.localTime}`;
     sessionAxisEl.appendChild(el);
   });
 }
@@ -410,7 +435,7 @@ function render(data) {
   const intraday=!["1d","1w"].includes(state.interval);
   sessionToggle.disabled=!intraday;
   sessionToggle.classList.toggle("unavailable",!intraday);
-  document.getElementById("sessionRef").textContent=intraday?"国家时段 澳 · 日 · 中 · 德 · 英 · 美":"日K/周K不显示日内时段";
+  document.getElementById("sessionRef").textContent=intraday?"国家时段 澳 · 日 · 中 · 印 · 德 · 英 · 美":"日K/周K不显示日内时段";
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
   document.getElementById("unit").textContent=data.unit;
@@ -426,8 +451,8 @@ function render(data) {
   document.getElementById("momentumState").textContent=analysis.momentum>1.5?"扩张":analysis.momentum>.7?"中性":"收敛";
   document.getElementById("pivotCount").textContent=analysis.sets.wave7.length;
   document.getElementById("signalText").textContent=`${directionalNames[analysis.main]}暂居首位，当前判断为${analysis.stage}。价格若有效越过 ${fmt(analysis.invalidation)}，需重新编号。`;
-  document.getElementById("dataTime").textContent=`数据时间 ${new Date(data.dataTime*1000).toLocaleTimeString("zh-CN",{hour12:false})}`;
-  document.getElementById("analysisTime").textContent=`分析时间 ${new Date().toLocaleTimeString("zh-CN",{hour12:false})}`;
+  document.getElementById("dataTime").textContent=`数据时间 ${formatDisplayTime(data.dataTime,false,true)}`;
+  document.getElementById("analysisTime").textContent=`分析时间 ${formatDisplayTime(Date.now()/1000,false,true)}`;
   document.getElementById("feedStatus").textContent=data.stale?"使用缓存":"行情已连接";
   document.querySelector(".live-chip").classList.toggle("stale",!!data.stale);
   document.getElementById("scenarios").innerHTML=Object.keys(analysis.probs).sort((a,b)=>analysis.probs[b]-analysis.probs[a]).map(key=>
@@ -484,11 +509,21 @@ document.getElementById("sessionToggle").addEventListener("click",e=>{
   btn.querySelector("span").textContent=state.showSessions?"隐藏国家时段":"显示国家时段";
   if(state.lastData)render(state.lastData);
 });
+document.querySelectorAll(".zone-button").forEach(btn=>btn.addEventListener("click",()=>{
+  state.displayZone=btn.dataset.zone;
+  document.querySelectorAll(".zone-button").forEach(x=>x.classList.toggle("active",x===btn));
+  chart.applyOptions({localization:{timeFormatter:time=>`${displayZones[state.displayZone].short} ${formatDisplayTime(time,false)}`}});
+  chart.timeScale().applyOptions({tickMarkFormatter:(time,tickMarkType)=>formatAxisTick(time,tickMarkType)});
+  if(state.lastData) render(state.lastData);
+  updateClock();
+}));
 chart.timeScale().subscribeVisibleLogicalRangeChange(()=>state.lastData&&requestAnimationFrame(()=>drawSessionAxis(state.lastData.bars)));
 new ResizeObserver(()=>state.lastData&&requestAnimationFrame(()=>drawSessionAxis(state.lastData.bars))).observe(chartEl);
 document.querySelector(".theme-toggle").addEventListener("click",()=>{
   const root=document.documentElement;root.dataset.theme=root.dataset.theme==="dark"?"light":"dark";
 });
-setInterval(()=>document.getElementById("clock").textContent=new Date().toLocaleTimeString("zh-CN",{hour12:false}),1000);
+function updateClock(){document.getElementById("clock").textContent=`${displayZones[state.displayZone].short} ${formatDisplayTime(Date.now()/1000,false,true)}`;}
+setInterval(updateClock,1000);
 setInterval(refresh,1000);
+updateClock();
 refresh();

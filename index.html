@@ -101,9 +101,13 @@
             </div>
             <div id="chart" data-testid="chart-market"></div>
             <div class="chart-footer">
+              <div class="timezone-switch" role="group" aria-label="时间轴时区">
+                <button class="zone-button active" data-zone="beijing" data-testid="button-zone-beijing">北京时间</button>
+                <button class="zone-button" data-zone="newyork" data-testid="button-zone-newyork">美国时间</button>
+              </div>
               <span id="dataTime">数据时间 —</span>
               <span id="analysisTime">分析时间 —</span>
-              <span id="sessionRef">国家时段 澳 · 日 · 中 · 德 · 英 · 美</span>
+              <span id="sessionRef">国家时段 澳 · 日 · 中 · 印 · 德 · 英 · 美</span>
               <span>每秒重算</span>
             </div>
           </article>
@@ -154,7 +158,7 @@
         <footer class="disclosure">
           <span>数据口径：XAUUSD、XAGUSD、USOIL现货CFD</span>
           <span>国家标签采用主要现货交易所核心时段，不含节假日及临时调整</span>
-          <span>时段来源：<a href="https://www.asx.com.au/markets/market-resources/trading-hours-calendar/cash-market-trading-hours" target="_blank" rel="noreferrer">ASX</a> · <a href="https://www.jpx.co.jp/english/systems/equities-trading/index.html" target="_blank" rel="noreferrer">JPX</a> · <a href="https://english.sse.com.cn/start/trading/schedule/" target="_blank" rel="noreferrer">SSE</a> · <a href="https://www.cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours" target="_blank" rel="noreferrer">Xetra</a> · <a href="https://www.londonstockexchange.com/trade/trading-hours" target="_blank" rel="noreferrer">LSE</a> · <a href="https://www.nyse.com/trade/hours-calendars" target="_blank" rel="noreferrer">NYSE</a></span>
+          <span>时段来源：<a href="https://www.asx.com.au/markets/market-resources/trading-hours-calendar/cash-market-trading-hours" target="_blank" rel="noreferrer">ASX</a> · <a href="https://www.jpx.co.jp/english/systems/equities-trading/index.html" target="_blank" rel="noreferrer">JPX</a> · <a href="https://english.sse.com.cn/start/trading/schedule/" target="_blank" rel="noreferrer">SSE</a> · <a href="https://www.nseindia.com/static/market-data/market-timings" target="_blank" rel="noreferrer">NSE</a> · <a href="https://www.cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours" target="_blank" rel="noreferrer">Xetra</a> · <a href="https://www.londonstockexchange.com/trade/trading-hours" target="_blank" rel="noreferrer">LSE</a> · <a href="https://www.nyse.com/trade/hours-calendars" target="_blank" rel="noreferrer">NYSE</a></span>
           <span>浪型及价位概率为结构评分，尚非历史校准概率</span>
           <span>仅供研究，不构成投资建议</span>
         </footer>
