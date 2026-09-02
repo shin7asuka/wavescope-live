@@ -7,7 +7,12 @@
 - 实时口径：TradingView 数据流中的 `OANDA:XAUUSD`、`OANDA:XAGUSD`、`TVC:USOIL`
 - 前端每秒请求一次，后端设有0.85秒缓存以控制重复请求
 - 1分钟、5分钟、15分钟和1小时周期
+- 日K与周K用于观察大级别结构
 - 上游报价没有新成交时，分析时间继续更新，但数据时间保持不变
+- 分钟与小时图标注上海期货交易所/上海国际能源交易中心及美国 COMEX/NYMEX 常规开收盘节点
+- 中国参考时段为北京时间夜盘 21:00–02:30、日盘 09:00–15:00；美国参考时段为芝加哥时间 17:00 重开、16:00 收盘
+- 美国节点通过 IANA 时区自动处理夏令时；交易所节假日与临时调整不在前端日历中
+- 时段核验：[上海期货交易所交易时间](https://www.shfe.com.cn/services/calenderandholidays/tradinghours/)；[CME Group Trading Hours](https://www.cmegroup.com/trading-hours.html)
 
 ## 浪型算法
 

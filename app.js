@@ -1,7 +1,11 @@
 const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
-const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, lastData: null, needsFocus: true };
+const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, lastData: null, needsFocus: true };
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
 const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
+const zoneFormatters = {
+  shanghai: new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
+  chicago: new Intl.DateTimeFormat("en-CA",{timeZone:"America/Chicago",year:"numeric",month:"2-digit",day:"2-digit",weekday:"short",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}),
+};
 
 const chartEl = document.getElementById("chart");
 const chart = LightweightCharts.createChart(chartEl, {
@@ -286,6 +290,43 @@ function analyze(bars) {
   return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
+function zonedBar(time, zone){
+  const parts=Object.fromEntries(zoneFormatters[zone].formatToParts(new Date(time*1000)).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));
+  return {time,date:`${parts.year}-${parts.month}-${parts.day}`,weekday:parts.weekday,minute:(Number(parts.hour)%24)*60+Number(parts.minute)};
+}
+function sessionMarkers(bars){
+  if(["1d","1w"].includes(state.interval)||!bars.length) return [];
+  const intervalMinutes={"1m":1,"5m":5,"15m":15,"1h":60}[state.interval]||1;
+  const first=Math.max(bars[0].time,bars.at(-1).time-3*86400);
+  const recent=bars.filter(b=>b.time>=first);
+  const exchange=state.asset==="wti"?"NYMEX":"COMEX";
+  const rules=[
+    {zone:"shanghai",minute:21*60,text:"沪夜开",open:true,days:["Mon","Tue","Wed","Thu"],color:"#f4b84b"},
+    {zone:"shanghai",minute:2*60+30,text:"沪夜收",open:false,days:["Tue","Wed","Thu","Fri"],color:"#f4b84b"},
+    {zone:"shanghai",minute:9*60,text:"沪日开",open:true,days:["Mon","Tue","Wed","Thu","Fri"],color:"#f4b84b"},
+    {zone:"shanghai",minute:15*60,text:"沪日收",open:false,days:["Mon","Tue","Wed","Thu","Fri"],color:"#f4b84b"},
+    {zone:"chicago",minute:17*60,text:`${exchange}开`,open:true,days:["Sun","Mon","Tue","Wed","Thu"],color:"#4fa9ff"},
+    {zone:"chicago",minute:16*60,text:`${exchange}收`,open:false,days:["Mon","Tue","Wed","Thu","Fri"],color:"#4fa9ff"},
+  ];
+  const localized={};
+  Object.keys(zoneFormatters).forEach(zone=>localized[zone]=recent.map(b=>zonedBar(b.time,zone)));
+  const markers=[];
+  rules.forEach(rule=>{
+    const byDate=new Map();
+    localized[rule.zone].forEach(bar=>{
+      if(!rule.days.includes(bar.weekday)) return;
+      if(!byDate.has(bar.date)) byDate.set(bar.date,[]);
+      byDate.get(bar.date).push(bar);
+    });
+    byDate.forEach(dayBars=>{
+      const nearest=dayBars.reduce((best,bar)=>Math.abs(bar.minute-rule.minute)<Math.abs(best.minute-rule.minute)?bar:best);
+      if(Math.abs(nearest.minute-rule.minute)<=Math.max(31,intervalMinutes*.6)){
+        markers.push({time:nearest.time,position:rule.open?"belowBar":"aboveBar",color:rule.color,shape:rule.open?"arrowUp":"arrowDown",text:rule.text});
+      }
+    });
+  });
+  return markers.sort((a,b)=>a.time-b.time);
+}
 function focusLatest(bars){
   const visibleByInterval={ "1m":150,"5m":160,"15m":170,"1h":150,"1d":180,"1w":156 };
   const widthFactor=chartEl.clientWidth<600?.52:chartEl.clientWidth<900?.78:1;
@@ -329,7 +370,13 @@ function render(data) {
     }),
     {time:data.bars.at(-1).time,position:data.change>=0?"belowBar":"aboveBar",color:colors[analysis.main],shape:data.change>=0?"arrowUp":"arrowDown",text:"实时"},
   ];
-  candles.setMarkers(state.showLabels?markerSets:[]);
+  const marketSessions=state.showSessions?sessionMarkers(data.bars):[];
+  candles.setMarkers([...(state.showLabels?markerSets:[]),...marketSessions].sort((a,b)=>a.time-b.time));
+  const sessionToggle=document.getElementById("sessionToggle");
+  const intraday=!["1d","1w"].includes(state.interval);
+  sessionToggle.disabled=!intraday;
+  sessionToggle.classList.toggle("unavailable",!intraday);
+  document.getElementById("sessionRef").textContent=intraday?`交易所时段 上海 + ${state.asset==="wti"?"NYMEX":"COMEX"}`:"日K/周K不显示日内时段";
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
   document.getElementById("unit").textContent=data.unit;
@@ -393,6 +440,12 @@ document.getElementById("labelToggle").addEventListener("click",e=>{
   state.showLabels=!state.showLabels;
   const btn=e.currentTarget;btn.classList.toggle("active",state.showLabels);
   btn.querySelector("span").textContent=state.showLabels?"隐藏标签":"显示标签";
+  if(state.lastData)render(state.lastData);
+});
+document.getElementById("sessionToggle").addEventListener("click",e=>{
+  state.showSessions=!state.showSessions;
+  const btn=e.currentTarget;btn.classList.toggle("active",state.showSessions);
+  btn.querySelector("span").textContent=state.showSessions?"隐藏时段":"显示时段";
   if(state.lastData)render(state.lastData);
 });
 document.querySelector(".theme-toggle").addEventListener("click",()=>{
