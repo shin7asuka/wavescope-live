@@ -108,6 +108,22 @@
               <span class="model-tag">启发式</span>
             </div>
             <div id="scenarios" class="scenario-list" data-testid="list-scenarios"></div>
+            <div class="levels-box" data-testid="list-levels">
+              <div class="levels-head">
+                <span class="eyebrow">结构价位簇</span>
+                <span class="level-note">动态概率</span>
+              </div>
+              <div class="level-columns">
+                <div>
+                  <h3 class="support-title">支撑位</h3>
+                  <div id="supportLevels" class="level-list"></div>
+                </div>
+                <div>
+                  <h3 class="resistance-title">阻力位</h3>
+                  <div id="resistanceLevels" class="level-list"></div>
+                </div>
+              </div>
+            </div>
             <div class="signal-box">
               <span class="eyebrow">当前判断</span>
               <p id="signalText">等待足够K线形成可识别结构。</p>
@@ -122,7 +138,7 @@
 
         <footer class="disclosure">
           <span>数据口径：XAUUSD、XAGUSD、USOIL现货CFD</span>
-          <span>概率为结构评分，尚非历史校准概率</span>
+          <span>浪型及价位概率为结构评分，尚非历史校准概率</span>
           <span>仅供研究，不构成投资建议</span>
         </footer>
       </main>

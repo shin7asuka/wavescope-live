@@ -18,6 +18,7 @@ const waveSeries = {
   wave7: chart.addLineSeries({ color: colors.wave7, lineWidth: 2, lineStyle: 2, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false }),
   abc: chart.addLineSeries({ color: colors.abc, lineWidth: 2, lineStyle: 1, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false }),
 };
+let levelPriceLines = [];
 
 function ema(values, n) {
   const k = 2 / (n + 1); let x = values[0];
@@ -48,6 +49,53 @@ function pivots(bars, multiplier) {
   return out;
 }
 function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+function buildLevels(sets, probs, bars, last, a, direction) {
+  const raw = [];
+  const sourceNames={wave5:"5浪摆动",wave7:"7浪边界",abc:"ABC高低点"};
+  Object.entries(sets).forEach(([key,arr])=>{
+    arr.slice(key==="wave7"?-8:-6).forEach((p,i,list)=>{
+      const recency=.58+.42*(i+1)/list.length;
+      raw.push({type:p.type==="L"?"support":"resistance",price:p.value,weight:probs[key]*recency*.72,source:sourceNames[key]});
+    });
+  });
+  const window=bars.slice(-100);
+  const localLow=Math.min(...window.map(b=>b.low)), localHigh=Math.max(...window.map(b=>b.high));
+  raw.push({type:"support",price:localLow,weight:38,source:"近期区间下沿"});
+  raw.push({type:"resistance",price:localHigh,weight:38,source:"近期区间上沿"});
+  const major=sets.abc.slice(-2);
+  if(major.length===2){
+    const hi=Math.max(major[0].value,major[1].value),lo=Math.min(major[0].value,major[1].value),span=hi-lo;
+    [0.382,0.5,0.618].forEach((r,i)=>{
+      const price=direction>0?hi-span*r:lo+span*r;
+      raw.push({type:price<=last?"support":"resistance",price,weight:30-i*2,source:`${Math.round(r*1000)/10}%回撤`});
+    });
+  }
+  const lastSwing=sets.wave5.slice(-2);
+  if(lastSwing.length===2){
+    const span=Math.abs(lastSwing[1].value-lastSwing[0].value);
+    const projected=last+direction*span*.618;
+    raw.push({type:projected<=last?"support":"resistance",price:projected,weight:probs.wave5*.5,source:"5浪0.618扩展"});
+  }
+  const filtered=raw.filter(x=>x.price>0&&(x.type==="support"?x.price<=last+a*.18:x.price>=last-a*.18));
+  function cluster(type){
+    const items=filtered.filter(x=>x.type===type).sort((x,y)=>x.price-y.price), clusters=[];
+    items.forEach(item=>{
+      const found=clusters.find(c=>Math.abs(c.price-item.price)<=a*.32);
+      if(found){
+        const oldWeight=found.weight;
+        found.price=(found.price*oldWeight+item.price*item.weight)/(oldWeight+item.weight);
+        found.weights.push(item.weight);found.weight+=item.weight;found.sources.add(item.source);
+      }else clusters.push({price:item.price,weight:item.weight,weights:[item.weight],sources:new Set([item.source])});
+    });
+    return clusters.map(c=>{
+      const combined=1-c.weights.reduce((prod,w)=>prod*(1-Math.min(.9,w/100)),1);
+      const distance=Math.abs(c.price-last)/a;
+      const relevance=Math.max(.72,1-Math.min(.28,distance*.018));
+      return {...c,prob:Math.min(92,Math.round(combined*100*relevance)),source:[...c.sources].slice(0,2).join(" + ")};
+    }).sort((x,y)=>type==="support"?y.price-x.price:x.price-y.price).slice(0,3);
+  }
+  return {support:cluster("support"),resistance:cluster("resistance")};
+}
 function analyze(bars) {
   const closes = bars.map(b=>b.close), e20=ema(closes,20), e50=ema(closes,50), av=atr(bars);
   const last=closes.at(-1), a=av.at(-1) || 1;
@@ -102,7 +150,8 @@ function analyze(bars) {
     paths[key]=arr.slice(-count).map(p=>({time:p.time,value:p.value}));
     paths[key].push({time:bars.at(-1).time,value:last});
   });
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths};
+  const levels=buildLevels(sets,probs,bars,last,a,direction);
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function render(data) {
@@ -114,6 +163,15 @@ function render(data) {
   };
   candles.setData(data.bars);
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
+  levelPriceLines.forEach(line=>candles.removePriceLine(line)); levelPriceLines=[];
+  analysis.levels.support.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
+    price:level.price,color:"rgba(81,215,139,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
+    axisLabelVisible:true,title:`S${i+1} ${level.prob}%`,
+  })));
+  analysis.levels.resistance.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
+    price:level.price,color:"rgba(255,108,120,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
+    axisLabelVisible:true,title:`R${i+1} ${level.prob}%`,
+  })));
   const startWave=Math.max(1,6-analysis.sets.wave5.slice(-6).length);
   const markerSets=[
     ...analysis.sets.wave5.slice(-6).map((p,i)=>{
@@ -147,6 +205,13 @@ function render(data) {
       <p>${key===analysis.main?analysis.stage:key==="wave7"?`${analysis.direction>0?"下降":"上升"}复杂调整候选`:key==="abc"?`${analysis.direction>0?"下降":"上升"}三段式调整候选`:`${analysis.direction>0?"上升":"下降"}顺势推动候选`}</p>
       <div class="prob-track"><i style="width:${analysis.probs[key]}%"></i></div>
     </article>`).join("");
+  const levelHtml=(levels,type)=>levels.length?levels.map((level,i)=>
+    `<div class="level-row" style="--level-color:${type==="support"?"var(--up)":"var(--down)"}">
+      <div class="level-top"><span class="level-price">${type==="support"?"S":"R"}${i+1} ${fmt(level.price)}</span><span class="level-prob">${level.prob}%</span></div>
+      <span class="level-source">${level.source}</span>
+    </div>`).join(""):`<span class="level-source">暂无有效价位</span>`;
+  document.getElementById("supportLevels").innerHTML=levelHtml(analysis.levels.support,"support");
+  document.getElementById("resistanceLevels").innerHTML=levelHtml(analysis.levels.resistance,"resistance");
 }
 async function refresh(){
   try{
