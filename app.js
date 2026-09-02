@@ -1,7 +1,7 @@
 const API = "__PORT_8000__".startsWith("__") ? "http://127.0.0.1:8000" : "__PORT_8000__";
 const state = { asset: "gold", interval: "1m", layers: { wave5: true, wave7: true, abc: true }, lastData: null };
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
-const names = { wave5: "5浪推动", wave7: "7浪复杂调整", abc: "ABC调整" };
+const names = { wave5: "5浪推动", wave7: "W-X-Y复杂调整", abc: "ABC锯齿调整" };
 
 const chartEl = document.getElementById("chart");
 const chart = LightweightCharts.createChart(chartEl, {
@@ -49,6 +49,76 @@ function pivots(bars, multiplier) {
   return out;
 }
 function sigmoid(x) { return 1 / (1 + Math.exp(-x)); }
+function candidateWindows(points, bars, last, count) {
+  const windows = [];
+  for (let i=Math.max(0,points.length-count-10); i<=points.length-count; i++) {
+    if(i>=0) windows.push(points.slice(i,i+count).map(p=>({...p,live:false})));
+  }
+  if(points.length>=count-1){
+    const tail=points.slice(-(count-1));
+    const prior=tail.at(-1);
+    if(prior){
+      const liveType=prior.type==="H"?"L":"H";
+      windows.push([...tail,{type:liveType,value:last,i:bars.length-1,time:bars.at(-1).time,confirmed:bars.length-1,live:true}]);
+    }
+  }
+  return windows;
+}
+function rule(name, pass, hard=true, detail="") { return {name,pass,hard,detail}; }
+function validateImpulse(points, direction, a) {
+  if(points.length!==6) return {valid:false,score:0,rules:[rule("需要6个边界点",false)]};
+  const p=points.map(x=>x.value), expected=direction>0?"LHLHLH":"HLHLHL";
+  const types=points.map(x=>x.type).join("");
+  const w1=Math.abs(p[1]-p[0]), w3=Math.abs(p[3]-p[2]), w5=Math.abs(p[5]-p[4]);
+  const r2=w1?Math.abs(p[2]-p[1])/w1:99, r4=w3?Math.abs(p[4]-p[3])/w3:99;
+  const rules=[
+    rule("方向交替",types===expected,true,`${types}/${expected}`),
+    rule("浪2不越浪1起点",direction>0?p[2]>p[0]:p[2]<p[0],true),
+    rule("浪3越过浪1终点",direction>0?p[3]>p[1]:p[3]<p[1],true),
+    rule("浪3不是最短推动浪",w3+0.05*a>=Math.min(w1,w5),true),
+    rule("浪4不进入浪1价格区",direction>0?p[4]>p[1]:p[4]<p[1],true),
+    rule("浪2常见回撤区",r2>=.382&&r2<=.786,false,`${(r2*100).toFixed(1)}%`),
+    rule("浪4回撤不过深",r4<=.5,false,`${(r4*100).toFixed(1)}%`),
+    rule("浪5测试浪3终点",direction>0?p[5]>=p[3]-.15*a:p[5]<=p[3]+.15*a,false),
+  ];
+  const hard=rules.filter(x=>x.hard), passed=rules.filter(x=>x.pass).length;
+  return {valid:hard.every(x=>x.pass),score:passed/rules.length,rules,points,
+    note:rules.filter(x=>x.hard&&!x.pass).map(x=>x.name).join("、")};
+}
+function validateABC(points, trendDirection) {
+  if(points.length!==4) return {valid:false,score:0,rules:[rule("需要4个边界点",false)]};
+  const p=points.map(x=>x.value), down=trendDirection>0;
+  const expected=down?"HLHL":"LHLH", types=points.map(x=>x.type).join("");
+  const rules=[
+    rule("A-B-C方向交替",types===expected,true,`${types}/${expected}`),
+    rule("B浪不越调整起点",down?p[2]<=p[0]:p[2]>=p[0],true),
+    rule("C浪越过A浪终点",down?p[3]<p[1]:p[3]>p[1],true),
+    rule("A、C同向",down?(p[1]<p[0]&&p[3]<p[2]):(p[1]>p[0]&&p[3]>p[2]),true),
+  ];
+  return {valid:rules.every(x=>x.pass),score:rules.filter(x=>x.pass).length/rules.length,rules,points,
+    note:rules.filter(x=>!x.pass).map(x=>x.name).join("、")};
+}
+function validateWXY(points, trendDirection) {
+  if(points.length!==8) return {valid:false,score:0,rules:[rule("需要8个边界点",false)]};
+  const p=points.map(x=>x.value), down=trendDirection>0;
+  const expected=down?"HLHLHLHL":"LHLHLHLH", types=points.map(x=>x.type).join("");
+  const rules=[
+    rule("7段方向严格交替",types===expected,true,`${types}/${expected}`),
+    rule("第一组B不越W起点",down?p[2]<=p[0]:p[2]>=p[0],true),
+    rule("第一组C越过A终点",down?p[3]<p[1]:p[3]>p[1],true),
+    rule("第二组B不越Y起点",down?p[6]<=p[4]:p[6]>=p[4],true),
+    rule("第二组C越过A'终点",down?p[7]<p[5]:p[7]>p[5],true),
+    rule("整体方向逆主趋势",down?p[7]<p[0]:p[7]>p[0],true),
+  ];
+  return {valid:rules.every(x=>x.pass),score:rules.filter(x=>x.pass).length/rules.length,rules,points,
+    note:rules.filter(x=>!x.pass).map(x=>x.name).join("、")};
+}
+function bestValidation(points,bars,last,count,validator) {
+  const tested=candidateWindows(points,bars,last,count).map(candidate=>validator(candidate));
+  return tested.sort((x,y)=>(Number(y.valid)-Number(x.valid))||(y.score-x.score)||
+    ((y.points?.at(-1)?.i||0)-(x.points?.at(-1)?.i||0)))[0] ||
+    {valid:false,score:0,rules:[rule(`边界点不足${count}个`,false)],points:[],note:"数据不足"};
+}
 function buildLevels(sets, probs, bars, last, a, direction) {
   const raw = [];
   const sourceNames={wave5:"5浪摆动",wave7:"7浪边界",abc:"ABC高低点"};
@@ -111,10 +181,15 @@ function analyze(bars) {
   const efficiency=range?travel/range:0;
   const density=Math.min(1,sets.wave7.filter(p=>p.i>bars.length-90).length/9);
   const overlap=1-Math.min(1,efficiency);
+  const validations={
+    wave5:bestValidation(sets.wave5,bars,last,6,p=>validateImpulse(p,direction,a)),
+    wave7:bestValidation(sets.wave7,bars,last,8,p=>validateWXY(p,direction)),
+    abc:bestValidation(sets.abc,bars,last,4,p=>validateABC(p,direction)),
+  };
   const scores={
-    wave5:1.0+2.0*trendStrength+1.1*(direction>0?hhhl:1-hhhl)+.6*efficiency,
-    wave7:1.0+1.7*density+1.5*overlap+1.0*(1-trendStrength),
-    abc:1.0+1.2*(recentA.length>=3?1:.2)+.8*(1-Math.abs(.5-trendStrength)),
+    wave5:1.0+2.0*trendStrength+1.1*(direction>0?hhhl:1-hhhl)+.6*efficiency+2.4*(validations.wave5.score-.5)+(validations.wave5.valid?1.2:-1.6),
+    wave7:1.0+1.7*density+1.5*overlap+1.0*(1-trendStrength)+2.0*(validations.wave7.score-.5)+(validations.wave7.valid?1.0:-1.4),
+    abc:1.0+1.2*(recentA.length>=3?1:.2)+.8*(1-Math.abs(.5-trendStrength))+1.8*(validations.abc.score-.5)+(validations.abc.valid?.8:-1.2),
   };
   const exp=Object.fromEntries(Object.entries(scores).map(([k,v])=>[k,Math.exp(v)]));
   const total=Object.values(exp).reduce((x,y)=>x+y,0);
@@ -124,42 +199,47 @@ function analyze(bars) {
   const ps=sets[main], lp=ps.at(-1), prior=ps.at(-2);
   let stage="形成中", stageNo=1, legDirection="待确认";
   if(main==="wave5"){
+    const selected=validations.wave5.points||[];
+    const complete=validations.wave5.valid&&selected.length===6;
+    const live=selected.at(-1)?.live;
     const seq=ps.slice(-5).map(p=>p.type).join("");
-    if(direction>0){ stageNo=seq.endsWith("LHL")?(last>(prior?.value||last)?3:2):seq.endsWith("LHLHL")?5:(lp?.type==="H"?4:3); }
+    if(complete) stageNo=5;
+    else if(direction>0){ stageNo=seq.endsWith("LHL")?(last>(prior?.value||last)?3:2):seq.endsWith("LHLHL")?5:(lp?.type==="H"?4:3); }
     else { stageNo=seq.endsWith("HLH")?(last<(prior?.value||last)?3:2):seq.endsWith("HLHLH")?5:(lp?.type==="L"?4:3); }
     const impulseUp=direction>0;
     const legUp=(stageNo%2===1)?impulseUp:!impulseUp;
     legDirection=legUp?"上升":"下降";
-    stage=`第${stageNo}浪${legDirection}${stageNo===2||stageNo===4?"调整":"推动"}中`;
+    stage=validations.wave5.valid?(complete&&!live?`第5浪完成候选`:`第${stageNo}浪${legDirection}${stageNo===2||stageNo===4?"调整":"推动"}中`):`5浪硬规则未通过：${validations.wave5.note||"边界不足"}`;
   } else if(main==="wave7") {
-    stageNo=Math.max(1,Math.min(7,ps.length%8||7));
+    const selected=validations.wave7.points||[], complete=validations.wave7.valid&&selected.length===8, live=selected.at(-1)?.live;
+    stageNo=complete?7:Math.max(1,Math.min(7,ps.length%8||7));
     const legUp=(stageNo%2===1)?direction<0:direction>0;
     legDirection=legUp?"上升":"下降";
-    stage=`第${stageNo}段${legDirection}${stageNo===7?"末端确认":"调整"}中`;
+    stage=validations.wave7.valid?(complete&&!live?`W-X-Y第7段完成候选`:`W-X-Y第${stageNo}段${legDirection}${stageNo===7?"末端确认":"调整"}中`):`W-X-Y规则未通过：${validations.wave7.note||"边界不足"}`;
   } else {
-    stageNo=Math.max(1,Math.min(3,ps.length%4||3));
+    const selected=validations.abc.points||[], complete=validations.abc.valid&&selected.length===4, live=selected.at(-1)?.live;
+    stageNo=complete?3:Math.max(1,Math.min(3,ps.length%4||3));
     const legUp=stageNo===2?direction>0:direction<0;
     legDirection=legUp?"上升":"下降";
-    stage=[`A浪${legDirection}调整中`,`B浪${legDirection}反弹中`,`C浪${legDirection}完成候选`][stageNo-1];
+    stage=validations.abc.valid?(complete&&!live?"C浪完成候选":[`A浪${legDirection}调整中`,`B浪${legDirection}反弹中`,`C浪${legDirection}完成候选`][stageNo-1]):`ABC规则未通过：${validations.abc.note||"边界不足"}`;
   }
   const invalidation=lp?.value ?? (direction>0?Math.min(...bars.slice(-20).map(b=>b.low)):Math.max(...bars.slice(-20).map(b=>b.high)));
   const momentum=Math.abs(last-closes.at(-6))/a;
   const paths={};
   Object.entries(sets).forEach(([key,arr])=>{
-    const count=key==="wave5"?6:key==="wave7"?8:4;
-    paths[key]=arr.slice(-count).map(p=>({time:p.time,value:p.value}));
-    paths[key].push({time:bars.at(-1).time,value:last});
+    const selected=validations[key].points||[];
+    paths[key]=selected.map(p=>({time:p.time,value:p.value}));
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels};
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function render(data) {
   state.lastData=data; const analysis=analyze(data.bars);
   const directionalNames={
     wave5:`${analysis.direction>0?"上升":"下降"}5浪推动`,
-    wave7:`${analysis.direction>0?"下降":"上升"}7浪调整`,
-    abc:`${analysis.direction>0?"下降":"上升"}ABC调整`,
+    wave7:`${analysis.direction>0?"下降":"上升"}W-X-Y调整`,
+    abc:`${analysis.direction>0?"下降":"上升"}ABC锯齿调整`,
   };
   candles.setData(data.bars);
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
@@ -172,10 +252,10 @@ function render(data) {
     price:level.price,color:"rgba(255,108,120,.72)",lineWidth:i===0?2:1,lineStyle:i===0?2:1,
     axisLabelVisible:true,title:`R${i+1} ${level.prob}%`,
   })));
-  const startWave=Math.max(1,6-analysis.sets.wave5.slice(-6).length);
+  const impulsePoints=analysis.validations.wave5.points||[];
   const markerSets=[
-    ...analysis.sets.wave5.slice(-6).map((p,i)=>{
-      const n=Math.min(5,startWave+i), up=(n%2===1)?analysis.direction>0:analysis.direction<0;
+    ...impulsePoints.slice(1).map((p,i)=>{
+      const n=i+1, up=(n%2===1)?analysis.direction>0:analysis.direction<0;
       return {time:p.time,position:p.type==="H"?"aboveBar":"belowBar",color:colors.wave5,shape:"circle",text:`${n}${up?"↑":"↓"}`};
     }),
   ];
@@ -202,7 +282,7 @@ function render(data) {
   document.getElementById("scenarios").innerHTML=Object.keys(analysis.probs).sort((a,b)=>analysis.probs[b]-analysis.probs[a]).map(key=>
     `<article class="scenario ${key===analysis.main?"primary":""}" style="--scenario-color:${colors[key]}">
       <div class="scenario-head"><span class="scenario-name"><i></i>${directionalNames[key]}</span><strong class="scenario-prob">${analysis.probs[key]}%</strong></div>
-      <p>${key===analysis.main?analysis.stage:key==="wave7"?`${analysis.direction>0?"下降":"上升"}复杂调整候选`:key==="abc"?`${analysis.direction>0?"下降":"上升"}三段式调整候选`:`${analysis.direction>0?"上升":"下降"}顺势推动候选`}</p>
+      <p>${key===analysis.main?analysis.stage:key==="wave7"?`${analysis.direction>0?"下降":"上升"}W-X-Y候选`:key==="abc"?`${analysis.direction>0?"下降":"上升"}ABC锯齿候选`:`${analysis.direction>0?"上升":"下降"}顺势推动候选`} · ${analysis.validations[key].valid?"硬规则通过":"硬规则未通过"} · 质量${analysis.validations[key].rules.filter(r=>r.pass).length}/${analysis.validations[key].rules.length}</p>
       <div class="prob-track"><i style="width:${analysis.probs[key]}%"></i></div>
     </article>`).join("");
   const levelHtml=(levels,type)=>levels.length?levels.map((level,i)=>
