@@ -54,10 +54,10 @@ const waveSeries = {
   wave7: chart.addLineSeries({ color: colors.wave7, lineWidth: 2, lineStyle: 2, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false }),
   abc: chart.addLineSeries({ color: colors.abc, lineWidth: 2, lineStyle: 1, crosshairMarkerVisible: false, lastValueVisible: false, priceLineVisible: false }),
 };
-const bollingerSeries = {
-  upper: chart.addLineSeries({ color:"#ff7b86",lineWidth:2,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"布林上轨" }),
-  middle: chart.addLineSeries({ color:"rgba(244,184,75,.82)",lineWidth:2,lineStyle:0,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林中轨" }),
-  lower: chart.addLineSeries({ color:"#51d78b",lineWidth:2,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"布林下轨" }),
+const channelSeries = {
+  upper: chart.addLineSeries({ color:"#ff7b86",lineWidth:3,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"动态上轨" }),
+  middle: chart.addLineSeries({ color:"rgba(244,184,75,.72)",lineWidth:1,lineStyle:3,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"通道中轴" }),
+  lower: chart.addLineSeries({ color:"#51d78b",lineWidth:3,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"动态下轨" }),
 };
 let levelPriceLines = [];
 
@@ -107,26 +107,33 @@ function macroGoldBand(last,a,sets) {
   const position=last>upper?"突破上沿":last<lower?"跌破下沿":`带内 ${Math.round((last-lower)/(upper-lower)*100)}%`;
   return {anchors,upper,lower,width:upper-lower,position,referenceMove:800};
 }
-function bollingerBands(bars,period=20,multiplier=2) {
-  if(bars.length<period) return null;
-  const closes=bars.map(b=>b.close),lines={upper:[],middle:[],lower:[]},rows=[];
-  for(let i=period-1;i<bars.length;i++){
-    const window=closes.slice(i-period+1,i+1);
-    const middle=window.reduce((sum,value)=>sum+value,0)/period;
-    const deviation=Math.sqrt(window.reduce((sum,value)=>sum+(value-middle)**2,0)/period);
-    const upper=middle+multiplier*deviation,lower=middle-multiplier*deviation;
-    const row={time:bars[i].time,middle,upper,lower,deviation};
-    rows.push(row);
-    Object.keys(lines).forEach(key=>lines[key].push({time:row.time,value:row[key]}));
-  }
-  const latest=rows.at(-1),comparison=rows[Math.max(0,rows.length-6)];
-  const normalizedSlope=(latest.middle-comparison.middle)/Math.max(latest.deviation,.000001);
-  const direction=normalizedSlope>.12?"上升":normalizedSlope<-.12?"下降":"横盘";
-  const width=latest.upper-latest.lower;
-  const bandwidth=latest.middle?width/latest.middle*100:0;
-  const percentB=width?(closes.at(-1)-latest.lower)/width*100:50;
-  const location=percentB>100?"突破上轨":percentB<0?"跌破下轨":percentB>=50?"中轨上方":"中轨下方";
-  return {period,multiplier,direction,normalizedSlope,bandwidth,percentB,location,latest,lines};
+function trendChannel(bars) {
+  const lookback={"1m":180,"5m":180,"15m":180,"1h":120,"1d":90,"1w":26}[state.interval]||180;
+  const count=Math.min(lookback,bars.length),sample=bars.slice(-count),n=sample.length;
+  if(n<20) return null;
+  const meanX=(n-1)/2,meanY=sample.reduce((s,b)=>s+(b.high+b.low+b.close)/3,0)/n;
+  let numerator=0,denominator=0;
+  sample.forEach((b,i)=>{const dx=i-meanX;numerator+=dx*((b.high+b.low+b.close)/3-meanY);denominator+=dx*dx;});
+  const slope=denominator?numerator/denominator:0,intercept=meanY-slope*meanX;
+  const highResiduals=sample.map((b,i)=>b.high-(intercept+slope*i));
+  const lowResiduals=sample.map((b,i)=>b.low-(intercept+slope*i));
+  const channelAtr=atr(sample).at(-1)||0;
+  const envelopePad=channelAtr*.06;
+  const upperOffset=Math.max(...highResiduals)+envelopePad;
+  const lowerOffset=Math.min(...lowResiduals)-envelopePad;
+  const at=i=>({middle:intercept+slope*i,upper:intercept+slope*i+upperOffset,lower:intercept+slope*i+lowerOffset});
+  const start=at(0),end=at(n-1),last=sample.at(-1).close,width=end.upper-end.lower;
+  const position=Math.max(0,Math.min(100,(last-end.lower)/Math.max(width,.0001)*100));
+  const totalMove=Math.abs(slope)*(n-1),direction=slope>=0?"上升":"下降";
+  const residualScale=Math.max(width/2,.0001);
+  const fit=Math.max(0,Math.min(1,1-sample.reduce((s,b,i)=>s+Math.abs(b.close-at(i).middle),0)/n/residualScale));
+  const contained=sample.every((b,i)=>b.high<=at(i).upper+1e-8&&b.low>=at(i).lower-1e-8);
+  return {direction,slope,start,end,width,position,totalMove,confidence:Math.round(35+fit*50),contained,envelopePad,count,
+    lines:{
+      upper:[{time:sample[0].time,value:start.upper},{time:sample.at(-1).time,value:end.upper}],
+      middle:[{time:sample[0].time,value:start.middle},{time:sample.at(-1).time,value:end.middle}],
+      lower:[{time:sample[0].time,value:start.lower},{time:sample.at(-1).time,value:end.lower}],
+    }};
 }
 function candidateWindows(points, bars, last, count) {
   const windows = [];
@@ -380,8 +387,8 @@ function analyze(bars) {
   });
   const levels=buildLevels(sets,probs,bars,last,a,direction);
   const macroBand=state.asset==="gold"?macroGoldBand(last,a,sets):null;
-  const bollinger=bollingerBands(bars);
-  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,bollinger,phaseModel};
+  const channel=trendChannel(bars);
+  return {probs,main,stage,stageNo,legDirection,invalidation,direction,trendStrength,momentum,sets,paths,levels,validations,macroBand,channel,phaseModel};
 }
 function fmt(v, asset=state.asset){ return Number(v).toLocaleString("en-US",{minimumFractionDigits:asset==="silver"?3:2,maximumFractionDigits:asset==="silver"?3:2}); }
 function zonedBar(time, zone){
@@ -465,10 +472,10 @@ function render(data) {
   };
   candles.setData(data.bars);
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
-  Object.entries(bollingerSeries).forEach(([key,series])=>{
-    const titles={upper:"布林上轨",middle:"布林中轨 SMA20",lower:"布林下轨"};
+  Object.entries(channelSeries).forEach(([key,series])=>{
+    const titles={upper:"动态上轨",middle:"通道中轴",lower:"动态下轨"};
     series.applyOptions({lastValueVisible:state.showLabels&&key!=="middle",title:state.showLabels?titles[key]:""});
-    series.setData(analysis.bollinger?analysis.bollinger.lines[key]:[]);
+    series.setData(analysis.channel?analysis.channel.lines[key]:[]);
   });
   levelPriceLines.forEach(line=>candles.removePriceLine(line)); levelPriceLines=[];
   analysis.levels.support.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
@@ -535,15 +542,14 @@ function render(data) {
     </div>`).join(""):`<span class="level-source">暂无有效价位</span>`;
   document.getElementById("supportLevels").innerHTML=levelHtml(analysis.levels.support,"support");
   document.getElementById("resistanceLevels").innerHTML=levelHtml(analysis.levels.resistance,"resistance");
-  const bollingerBox=document.getElementById("bollingerPanel");
-  bollingerBox.hidden=!analysis.bollinger;
-  if(analysis.bollinger){
-    const b=analysis.bollinger;
-    document.getElementById("bollingerRange").textContent=`${b.direction}布林带 ${fmt(b.latest.lower)} — ${fmt(b.latest.upper)}`;
-    document.getElementById("bollingerPosition").textContent=`${b.location} · %B ${b.percentB.toFixed(1)}% · 带宽 ${b.bandwidth.toFixed(2)}%`;
-    document.getElementById("macroLevels").innerHTML=analysis.macroBand
-      ? analysis.macroBand.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("")
-      : "";
+  const macroBox=document.getElementById("macroBand");
+  macroBox.hidden=!analysis.macroBand;
+  if(analysis.macroBand){
+    const m=analysis.macroBand;
+    const c=analysis.channel;
+    document.getElementById("macroRange").textContent=c?`${c.direction}包络通道 ${fmt(c.end.lower)} — ${fmt(c.end.upper)}`:`${fmt(m.lower)} — ${fmt(m.upper)}`;
+    document.getElementById("macroPosition").textContent=c?`带内 ${Math.round(c.position)}% · 包络${c.contained?"完整":"异常"}`:`${m.position}`;
+    document.getElementById("macroLevels").innerHTML=m.anchors.map(x=>`<div class="macro-level" style="--macro-color:${x.color}"><b>${fmt(x.price)}</b><span>${x.label}</span><em>${x.prob}%</em></div>`).join("");
   }
   if(state.needsFocus) requestAnimationFrame(()=>focusLatest(data.bars));
 }
