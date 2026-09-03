@@ -2,6 +2,7 @@ const API = "__PORT_8000__".startsWith("__PORT_")
   ? ([location.hostname,"localhost","127.0.0.1"].includes(location.hostname)?"http://127.0.0.1:8000":location.origin)
   : "__PORT_8000__";
 const state = { asset: "gold", interval: "1m", displayZone: "beijing", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, showBollinger: true, lastData: null, needsFocus: true };
+let viewRevision=0;
 const alertAssetNames={gold:"黄金 XAUUSD",silver:"白银 XAGUSD",wti:"WTI USOIL"};
 const alertState={rules:[],latest:{},polling:false,alarm:null,audio:null,alarmTimer:null,alarmLoop:null,subscriptionId:null,pushEnabled:false};
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
@@ -70,9 +71,6 @@ const bollingerSeries = {
   middle: chart.addLineSeries({ color:"rgba(128,164,214,.62)",lineWidth:1,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林中轨" }),
   lower: chart.addLineSeries({ color:"rgba(76,151,255,.88)",lineWidth:1,lineStyle:0,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林下轨" }),
 };
-const futureAxisSeries=chart.addLineSeries({
-  color:"transparent",lineWidth:1,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"",
-});
 let levelPriceLines = [];
 
 function ema(values, n) {
@@ -686,20 +684,12 @@ function drawSessionAxis(bars){
     sessionAxisEl.appendChild(el);
   });
 }
-function futureAxisPoints(bars){
-  if(!bars.length)return [];
-  const last=bars.at(-1).time;
-  if(state.interval==="1d") return [{time:last+86400}];
-  if(state.interval==="1w") return [{time:last+7*86400}];
-  const slots=16,step=4*3600/slots;
-  return Array.from({length:slots},(_,i)=>({time:last+Math.round(step*(i+1))}));
-}
 function focusLatest(bars){
   const visibleByInterval={ "1m":150,"5m":160,"15m":170,"1h":150,"4h":140,"1d":180,"1w":156 };
   const widthFactor=chartEl.clientWidth<600?.52:chartEl.clientWidth<900?.78:1;
   const visible=Math.min(bars.length,Math.max(55,Math.round((visibleByInterval[state.interval]||160)*widthFactor)));
-  const futureSlots=futureAxisPoints(bars).length;
-  chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-visible)-.5,to:bars.length-1+futureSlots+.5});
+  const rightBars=12;
+  chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-visible)-.5,to:bars.length-1+rightBars+.5});
   chart.priceScale("right").applyOptions({autoScale:true,scaleMargins:{top:.08,bottom:.12}});
   state.needsFocus=false;
 }
@@ -712,7 +702,6 @@ function render(data) {
     abc:`${analysis.direction>0?"下降":"上升"}ABC锯齿调整`,
   };
   candles.setData(data.bars);
-  futureAxisSeries.setData(futureAxisPoints(data.bars));
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
   Object.entries(channelSeries).forEach(([key,series])=>{
     const titles={upper:"动态上轨",middle:"通道中轴",lower:"动态下轨"};
@@ -746,9 +735,8 @@ function render(data) {
   sessionToggle.disabled=!intraday;
   sessionToggle.classList.toggle("unavailable",!intraday);
   document.getElementById("sessionRef").textContent=intraday?"国家时段 澳 · 日 · 中 · 印 · 德 · 英 · 美":"日K/周K不显示日内时段";
-  const horizonSeconds=state.interval==="1w"?7*86400:state.interval==="1d"?86400:4*3600;
-  const horizonLabel=state.interval==="1w"?"+1周":state.interval==="1d"?"+1日":"+4小时";
-  document.getElementById("futureHorizon").textContent=`未来轴至 ${displayZones[state.displayZone].short} ${formatDisplayTime(data.bars.at(-1).time+horizonSeconds,false)}（${horizonLabel}）`;
+  const extensionLabel={"1m":"12分钟","5m":"1小时","15m":"3小时","1h":"12小时","4h":"2日","1d":"12日","1w":"12周"}[state.interval]||"12根K线";
+  document.getElementById("futureHorizon").textContent=`右侧预留 12根K线（约${extensionLabel}）`;
   document.querySelector("#channelLegend span").textContent=state.asset==="gold"&&["1d","1w"].includes(state.interval)?"长期趋势带":"局部趋势带";
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
@@ -797,17 +785,20 @@ function render(data) {
   if(state.needsFocus) requestAnimationFrame(()=>focusLatest(data.bars));
 }
 async function refresh(){
+  const revision=viewRevision,requestedAsset=state.asset,requestedInterval=state.interval;
   try{
-    const r=await fetch(`${API}/api/market/${state.asset}?interval=${state.interval}`,{cache:"no-store"});
+    const r=await fetch(`${API}/api/market/${requestedAsset}?interval=${requestedInterval}`,{cache:"no-store"});
     if(!r.ok) throw new Error("行情接口异常");
-    const data=await r.json(); if(data.error) throw new Error(data.error); render(data);
+    const data=await r.json(); if(data.error) throw new Error(data.error);
+    if(revision!==viewRevision||requestedAsset!==state.asset||requestedInterval!==state.interval)return;
+    render(data);
   }catch(e){document.getElementById("feedStatus").textContent="正在重连";document.querySelector(".live-chip").classList.add("stale");}
 }
 document.querySelectorAll(".asset-button").forEach(btn=>btn.addEventListener("click",()=>{
-  document.querySelectorAll(".asset-button").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.asset=btn.dataset.asset;state.needsFocus=true;refresh();
+  document.querySelectorAll(".asset-button").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.asset=btn.dataset.asset;viewRevision++;state.needsFocus=true;refresh();
 }));
 document.querySelectorAll(".tf").forEach(btn=>btn.addEventListener("click",()=>{
-  document.querySelectorAll(".tf").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.interval=btn.dataset.interval;state.needsFocus=true;
+  document.querySelectorAll(".tf").forEach(x=>x.classList.remove("active"));btn.classList.add("active");state.interval=btn.dataset.interval;viewRevision++;state.needsFocus=true;
   if(["1d","1w"].includes(state.interval)) sessionAxisEl.innerHTML="";
   refresh();
 }));
