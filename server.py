@@ -35,7 +35,7 @@ INTERVALS = {
 }
 CACHE = {}
 LOCKS = {k: asyncio.Lock() for k in SYMBOLS}
-DATABASE_PATH = os.getenv("DATABASE_PATH", "./wavescope.db")
+DATABASE_PATH = os.getenv("DATABASE_PATH", "/tmp/wavescope.db")
 VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:alerts@wavescope.app")
