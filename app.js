@@ -39,7 +39,9 @@ function formatDisplayDateTime(time){
 
 const chartEl = document.getElementById("chart");
 const chart = LightweightCharts.createChart(chartEl, {
-  autoSize: true,
+  autoSize: false,
+  width: chartEl.clientWidth,
+  height: chartEl.clientHeight,
   layout: { background: { type: "solid", color: "transparent" }, textColor: "#8293a3", fontFamily: "Jet Brains Mono, monospace", fontSize: 11 },
   grid: { vertLines: { color: "rgba(100,130,150,.10)" }, horzLines: { color: "rgba(100,130,150,.10)" } },
   rightPriceScale: { borderColor: "rgba(100,130,150,.18)" },
@@ -823,7 +825,27 @@ document.querySelectorAll(".zone-button").forEach(btn=>btn.addEventListener("cli
   updateClock();
 }));
 chart.timeScale().subscribeVisibleLogicalRangeChange(()=>state.lastData&&requestAnimationFrame(()=>drawSessionAxis(state.lastData.bars)));
-new ResizeObserver(()=>state.lastData&&requestAnimationFrame(()=>drawSessionAxis(state.lastData.bars))).observe(chartEl);
+let viewportFocusTimer;
+new ResizeObserver(entries=>{
+  const box=entries[0]?.contentRect;
+  if(box?.width&&box?.height) chart.resize(box.width,box.height);
+  if(!state.lastData)return;
+  requestAnimationFrame(()=>drawSessionAxis(state.lastData.bars));
+  clearTimeout(viewportFocusTimer);
+  viewportFocusTimer=setTimeout(()=>{
+    state.needsFocus=true;
+    focusLatest(state.lastData.bars);
+  },140);
+}).observe(chartEl);
+const landscapePhone=matchMedia("(orientation: landscape) and (max-width: 1000px) and (max-height: 600px)");
+function refitAfterRotation(){
+  scrollTo({top:0,left:0,behavior:"instant"});
+  if(!state.lastData)return;
+  state.needsFocus=true;
+  requestAnimationFrame(()=>focusLatest(state.lastData.bars));
+}
+landscapePhone.addEventListener?.("change",()=>setTimeout(refitAfterRotation,160));
+addEventListener("orientationchange",()=>setTimeout(refitAfterRotation,220));
 document.querySelector(".theme-toggle").addEventListener("click",()=>{
   const root=document.documentElement;root.dataset.theme=root.dataset.theme==="dark"?"light":"dark";
 });
