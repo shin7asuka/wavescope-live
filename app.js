@@ -1,7 +1,7 @@
 const API = "__PORT_8000__".startsWith("__PORT_")
   ? ([location.hostname,"localhost","127.0.0.1"].includes(location.hostname)?"http://127.0.0.1:8000":location.origin)
   : "__PORT_8000__";
-const state = { asset: "gold", interval: "1m", displayZone: "beijing", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, lastData: null, needsFocus: true };
+const state = { asset: "gold", interval: "1m", displayZone: "beijing", layers: { wave5: true, wave7: true, abc: true }, showLabels: false, showSessions: true, showBollinger: true, lastData: null, needsFocus: true };
 const alertAssetNames={gold:"黄金 XAUUSD",silver:"白银 XAGUSD",wti:"WTI USOIL"};
 const alertState={rules:[],latest:{},polling:false,alarm:null,audio:null,alarmTimer:null,alarmLoop:null,subscriptionId:null,pushEnabled:false};
 const colors = { wave5: "#36d6c7", wave7: "#a988ff", abc: "#f4b84b" };
@@ -63,6 +63,11 @@ const channelSeries = {
   middle: chart.addLineSeries({ color:"rgba(244,184,75,.72)",lineWidth:1,lineStyle:3,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"通道中轴" }),
   lower: chart.addLineSeries({ color:"#51d78b",lineWidth:3,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:true,priceLineVisible:false,title:"动态下轨" }),
 };
+const bollingerSeries = {
+  upper: chart.addLineSeries({ color:"rgba(76,151,255,.88)",lineWidth:1,lineStyle:0,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林上轨" }),
+  middle: chart.addLineSeries({ color:"rgba(128,164,214,.62)",lineWidth:1,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林中轨" }),
+  lower: chart.addLineSeries({ color:"rgba(76,151,255,.88)",lineWidth:1,lineStyle:0,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林下轨" }),
+};
 let levelPriceLines = [];
 
 function ema(values, n) {
@@ -72,6 +77,28 @@ function ema(values, n) {
 function atr(bars, n = 14) {
   const tr = bars.map((b, i) => i ? Math.max(b.high - b.low, Math.abs(b.high - bars[i-1].close), Math.abs(b.low - bars[i-1].close)) : b.high - b.low);
   return ema(tr, n);
+}
+function bollingerBands(bars, period=20, multiplier=2){
+  const result={upper:[],middle:[],lower:[]};
+  if(bars.length<period) return result;
+  let sum=0,sumSquares=0;
+  for(let i=0;i<bars.length;i++){
+    const close=bars[i].close;
+    sum+=close;sumSquares+=close*close;
+    if(i>=period){
+      const old=bars[i-period].close;
+      sum-=old;sumSquares-=old*old;
+    }
+    if(i>=period-1){
+      const mean=sum/period;
+      const variance=Math.max(0,sumSquares/period-mean*mean);
+      const deviation=Math.sqrt(variance)*multiplier;
+      result.middle.push({time:bars[i].time,value:mean});
+      result.upper.push({time:bars[i].time,value:mean+deviation});
+      result.lower.push({time:bars[i].time,value:mean-deviation});
+    }
+  }
+  return result;
 }
 function pivots(bars, multiplier) {
   if (bars.length < 20) return [];
@@ -157,7 +184,7 @@ function trendChannel(bars,dailyBars=[]) {
     const anchored=anchoredGoldChannel(bars,dailyBars);
     if(anchored) return anchored;
   }
-  const lookback={"1m":180,"5m":180,"15m":180,"1h":120,"1d":90,"1w":26}[state.interval]||180;
+  const lookback={"1m":180,"5m":180,"15m":180,"1h":120,"4h":120,"1d":90,"1w":26}[state.interval]||180;
   const count=Math.min(lookback,bars.length),sample=bars.slice(-count),n=sample.length;
   if(n<20) return null;
   const meanX=(n-1)/2,meanY=sample.reduce((s,b)=>s+(b.high+b.low+b.close)/3,0)/n;
@@ -596,7 +623,7 @@ function zonedBar(time, zone){
 }
 function marketSessionEvents(bars){
   if(["1d","1w"].includes(state.interval)||!bars.length) return [];
-  const intervalMinutes={"1m":1,"5m":5,"15m":15,"1h":60}[state.interval]||1;
+  const intervalMinutes={"1m":1,"5m":5,"15m":15,"1h":60,"4h":240}[state.interval]||1;
   const first=Math.max(bars[0].time,bars.at(-1).time-30*3600);
   const recent=bars.filter(b=>b.time>=first);
   const weekdays=["Mon","Tue","Wed","Thu","Fri"];
@@ -655,7 +682,7 @@ function drawSessionAxis(bars){
   });
 }
 function focusLatest(bars){
-  const visibleByInterval={ "1m":150,"5m":160,"15m":170,"1h":150,"1d":180,"1w":156 };
+  const visibleByInterval={ "1m":150,"5m":160,"15m":170,"1h":150,"4h":140,"1d":180,"1w":156 };
   const widthFactor=chartEl.clientWidth<600?.52:chartEl.clientWidth<900?.78:1;
   const visible=Math.min(bars.length,Math.max(55,Math.round((visibleByInterval[state.interval]||160)*widthFactor)));
   chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-visible)-.5,to:bars.length-1+7});
@@ -664,6 +691,7 @@ function focusLatest(bars){
 }
 function render(data) {
   state.lastData=data; const analysis=analyze(data.bars,data.macroBars||[]);
+  const bollinger=bollingerBands(data.bars);
   const directionalNames={
     wave5:`${analysis.direction>0?"上升":"下降"}5浪推动`,
     wave7:`${analysis.direction>0?"下降":"上升"}W-X-Y调整`,
@@ -675,6 +703,9 @@ function render(data) {
     const titles={upper:"动态上轨",middle:"通道中轴",lower:"动态下轨"};
     series.applyOptions({lastValueVisible:state.showLabels&&key!=="middle",title:state.showLabels?titles[key]:""});
     series.setData(analysis.channel?analysis.channel.lines[key]:[]);
+  });
+  Object.entries(bollingerSeries).forEach(([key,series])=>{
+    series.setData(state.showBollinger?bollinger[key]:[]);
   });
   levelPriceLines.forEach(line=>candles.removePriceLine(line)); levelPriceLines=[];
   analysis.levels.support.forEach((level,i)=>levelPriceLines.push(candles.createPriceLine({
@@ -776,6 +807,12 @@ document.getElementById("sessionToggle").addEventListener("click",e=>{
   const btn=e.currentTarget;btn.classList.toggle("active",state.showSessions);
   btn.querySelector("span").textContent=state.showSessions?"隐藏国家时段":"显示国家时段";
   if(state.lastData)render(state.lastData);
+});
+document.getElementById("bollingerToggle").addEventListener("click",e=>{
+  state.showBollinger=!state.showBollinger;
+  const btn=e.currentTarget;btn.classList.toggle("active",state.showBollinger);
+  btn.querySelector("span").textContent=state.showBollinger?"隐藏布林带":"显示布林带";
+  if(state.lastData) render(state.lastData);
 });
 document.querySelectorAll(".zone-button").forEach(btn=>btn.addEventListener("click",()=>{
   state.displayZone=btn.dataset.zone;
