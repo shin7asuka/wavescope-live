@@ -70,6 +70,9 @@ const bollingerSeries = {
   middle: chart.addLineSeries({ color:"rgba(128,164,214,.62)",lineWidth:1,lineStyle:2,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林中轨" }),
   lower: chart.addLineSeries({ color:"rgba(76,151,255,.88)",lineWidth:1,lineStyle:0,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"布林下轨" }),
 };
+const futureAxisSeries=chart.addLineSeries({
+  color:"transparent",lineWidth:1,crosshairMarkerVisible:false,lastValueVisible:false,priceLineVisible:false,title:"",
+});
 let levelPriceLines = [];
 
 function ema(values, n) {
@@ -683,11 +686,20 @@ function drawSessionAxis(bars){
     sessionAxisEl.appendChild(el);
   });
 }
+function futureAxisPoints(bars){
+  if(!bars.length)return [];
+  const last=bars.at(-1).time;
+  if(state.interval==="1d") return [{time:last+86400}];
+  if(state.interval==="1w") return [{time:last+7*86400}];
+  const slots=16,step=4*3600/slots;
+  return Array.from({length:slots},(_,i)=>({time:last+Math.round(step*(i+1))}));
+}
 function focusLatest(bars){
   const visibleByInterval={ "1m":150,"5m":160,"15m":170,"1h":150,"4h":140,"1d":180,"1w":156 };
   const widthFactor=chartEl.clientWidth<600?.52:chartEl.clientWidth<900?.78:1;
   const visible=Math.min(bars.length,Math.max(55,Math.round((visibleByInterval[state.interval]||160)*widthFactor)));
-  chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-visible)-.5,to:bars.length-1+7});
+  const futureSlots=futureAxisPoints(bars).length;
+  chart.timeScale().setVisibleLogicalRange({from:Math.max(0,bars.length-visible)-.5,to:bars.length-1+futureSlots+.5});
   chart.priceScale("right").applyOptions({autoScale:true,scaleMargins:{top:.08,bottom:.12}});
   state.needsFocus=false;
 }
@@ -700,6 +712,7 @@ function render(data) {
     abc:`${analysis.direction>0?"下降":"上升"}ABC锯齿调整`,
   };
   candles.setData(data.bars);
+  futureAxisSeries.setData(futureAxisPoints(data.bars));
   Object.entries(waveSeries).forEach(([key,series])=>{ series.setData(state.layers[key]?analysis.paths[key]:[]); });
   Object.entries(channelSeries).forEach(([key,series])=>{
     const titles={upper:"动态上轨",middle:"通道中轴",lower:"动态下轨"};
@@ -733,6 +746,9 @@ function render(data) {
   sessionToggle.disabled=!intraday;
   sessionToggle.classList.toggle("unavailable",!intraday);
   document.getElementById("sessionRef").textContent=intraday?"国家时段 澳 · 日 · 中 · 印 · 德 · 英 · 美":"日K/周K不显示日内时段";
+  const horizonSeconds=state.interval==="1w"?7*86400:state.interval==="1d"?86400:4*3600;
+  const horizonLabel=state.interval==="1w"?"+1周":state.interval==="1d"?"+1日":"+4小时";
+  document.getElementById("futureHorizon").textContent=`未来轴至 ${displayZones[state.displayZone].short} ${formatDisplayTime(data.bars.at(-1).time+horizonSeconds,false)}（${horizonLabel}）`;
   document.querySelector("#channelLegend span").textContent=state.asset==="gold"&&["1d","1w"].includes(state.interval)?"长期趋势带":"局部趋势带";
   document.getElementById("assetTitle").textContent=`${data.name} · ${data.code}`;
   document.getElementById("price").textContent=fmt(data.price);
