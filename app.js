@@ -837,15 +837,18 @@ new ResizeObserver(entries=>{
     focusLatest(state.lastData.bars);
   },140);
 }).observe(chartEl);
-const landscapePhone=matchMedia("(orientation: landscape) and (max-width: 1000px) and (max-height: 600px)");
+const landscapePhone=matchMedia("(max-width: 1000px) and (max-height: 600px) and (min-aspect-ratio: 4/3)");
 function refitAfterRotation(){
-  scrollTo({top:0,left:0,behavior:"instant"});
+  scrollTo(0,0);
   if(!state.lastData)return;
   state.needsFocus=true;
   requestAnimationFrame(()=>focusLatest(state.lastData.bars));
 }
 landscapePhone.addEventListener?.("change",()=>setTimeout(refitAfterRotation,160));
 addEventListener("orientationchange",()=>setTimeout(refitAfterRotation,220));
+screen.orientation?.addEventListener?.("change",()=>setTimeout(refitAfterRotation,220));
+visualViewport?.addEventListener?.("resize",()=>setTimeout(refitAfterRotation,120));
+addEventListener("pageshow",()=>setTimeout(refitAfterRotation,120));
 document.querySelector(".theme-toggle").addEventListener("click",()=>{
   const root=document.documentElement;root.dataset.theme=root.dataset.theme==="dark"?"light":"dark";
 });
